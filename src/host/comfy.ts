@@ -161,23 +161,65 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
   const positive = sampler === undefined ? undefined : textOf(workflow, sampler[1].inputs!.positive)
   const negative = sampler === undefined ? undefined : textOf(workflow, sampler[1].inputs!.negative)
 
+  const promptSources = new Map<string, 'prompt' | 'negative_prompt'>()
+  const markSource = (target: unknown, kind: 'prompt' | 'negative_prompt'): void => {
+    const text = textOf(workflow, target)
+    if (text !== undefined) {
+      const key = `${text.nodeId}.${text.key}`
+      if (!promptSources.has(key)) promptSources.set(key, kind)
+    }
+  }
+  if (positive !== undefined) promptSources.set(`${positive.nodeId}.${positive.key}`, 'prompt')
+  if (negative !== undefined) promptSources.set(`${negative.nodeId}.${negative.key}`, 'negative_prompt')
+
+  // Many video workflows do not have a KSampler with positive/negative links
+  // (MiniMax H3, WAN, custom guiders). Find the prompt by looking at the input
+  // that consumes it (`prompt`, `text`, `positive`) and at primitives whose
+  // title says "Prompt"/"Text".
+  for (const [nodeId, node] of entries) {
+    const inputs = node.inputs ?? {}
+    const title = node._meta?.title ?? ''
+    for (const [key, value] of Object.entries(inputs)) {
+      const isNegative = /^negative/i.test(key)
+      const isPositive = /^(prompt|text|positive|positive_prompt)$/i.test(key)
+      if (!isNegative && !isPositive) continue
+      if (isLink(value)) {
+        markSource(value, isNegative ? 'negative_prompt' : 'prompt')
+      } else if (isPositive && typeof value === 'string' && value !== '' && /condition|guider|encode/i.test(node.class_type ?? '')) {
+        if (!promptSources.has(`${nodeId}.${key}`)) promptSources.set(`${nodeId}.${key}`, 'prompt')
+      }
+    }
+    if (/prompt|text/i.test(title)) {
+      const textKey = ['value', 'text', 'string'].find(candidate => typeof inputs[candidate] === 'string')
+      if (textKey !== undefined && !promptSources.has(`${nodeId}.${textKey}`)) {
+        promptSources.set(`${nodeId}.${textKey}`, /negative/i.test(title) ? 'negative_prompt' : 'prompt')
+      }
+    }
+  }
+
   const slots: WorkflowSlot[] = []
   const taken = new Map<string, WorkflowSlot>()
   const add = (slot: WorkflowSlot): void => {
     const existing = taken.get(slot.name)
     if (existing !== undefined) {
       if (existing.type === slot.type && existing.value === slot.value) return
-      slot.name = `${slot.name}_${slot.nodeId}`
+      let suffix = 2
+      let candidate = `${slot.name}_${String(suffix)}`
+      while (taken.has(candidate)) {
+        suffix += 1
+        candidate = `${slot.name}_${String(suffix)}`
+      }
+      slot.name = candidate
     }
     taken.set(slot.name, slot)
     slots.push(slot)
   }
+  let imageCount = 0
 
   for (const [nodeId, node] of entries) {
     const inputs = node.inputs ?? {}
     const className = node.class_type ?? ''
-    for (const [key, value] of Object.entries(inputs)) {
-      if (isLink(value)) continue
+    for (const [key, value] of Object.entries(inputs)) {      if (isLink(value)) continue
       if (INTERNAL_INPUT.some(pattern => pattern.test(key))) continue
 
       // Explicit placeholders win over heuristics: the author said "this is a knob".
@@ -189,34 +231,45 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
 
       const isImage = /loadimage|loadimages|imageinput/i.test(className) && /image/i.test(key)
       if (isImage) {
-        add({ name: 'image', type: 'image', nodeId, input: key, required: true, value: typeof value === 'string' ? value : '' })
+        // A LoadImage with a filename baked into the template is optional: the
+        // user may run it as-is, replace it, or build a text-only variant by
+        // clearing the slot in ComfyUI first. Only an empty slot is mandatory.
+        const required = (typeof value === 'string' ? value.trim() : '') === ''
+        imageCount += 1
+        add({ name: 'image', type: 'image', nodeId, input: key, required, value: typeof value === 'string' ? value : '', label: `参考图 ${String(imageCount)}` })
         continue
       }
 
-      let name: string | undefined
-      if (positive !== undefined && positive.nodeId === nodeId && positive.key === key) name = 'prompt'
-      else if (negative !== undefined && negative.nodeId === nodeId && negative.key === key) name = 'negative_prompt'
-      else if (key === 'seed' || key === 'noise_seed') name = 'seed'
-      else if (key === 'width') name = 'width'
-      else if (key === 'height') name = 'height'
-      else if (key === 'steps') name = 'steps'
-      else if (key === 'cfg') name = 'cfg'
-      else if (key === 'denoise') name = 'denoise'
-      else if (key === 'text') name = 'text'
+      let name: string | undefined = promptSources.get(`${nodeId}.${key}`)
+      if (name === undefined && typeof value === 'number' && /duration|seconds|length/i.test(node._meta?.title ?? '') && /^(value|duration|seconds|length)$/i.test(key)) {
+        name = 'duration'
+      }
+      if (name === undefined) {
+        if (key === 'seed' || key === 'noise_seed') name = 'seed'
+        else if (key === 'width') name = 'width'
+        else if (key === 'height') name = 'height'
+        else if (key === 'steps') name = 'steps'
+        else if (key === 'cfg') name = 'cfg'
+        else if (key === 'denoise') name = 'denoise'
+        else if (key === 'text') name = 'text'
+      }
       if (name === undefined) continue
 
       const type = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string'
-      add({ name, type, nodeId, input: key, required: false, value: value as string | number | boolean, label: key })
+      const label = name === 'prompt' ? '提示词' : name === 'negative_prompt' ? '负面提示词' : name === 'duration' ? '时长（秒）' : (node._meta?.title ?? key)
+      add({ name, type, nodeId, input: key, required: false, value: value as string | number | boolean, label })
     }
   }
 
   // Sort so prompt comes first: that is what the panel and the model fill in.
-  const order = ['prompt', 'negative_prompt', 'image', 'width', 'height', 'seed', 'steps', 'cfg', 'denoise']
-  slots.sort((a, b) => {
-    const ai = order.indexOf(a.name)
-    const bi = order.indexOf(b.name)
-    return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
-  })
+  const order = ['prompt', 'negative_prompt', 'image', 'duration', 'width', 'height', 'seed', 'steps', 'cfg', 'denoise']
+  const rank = (name: string): number => {
+    for (const [index, prefix] of order.entries()) {
+      if (name === prefix || name.startsWith(`${prefix}_`)) return index
+    }
+    return 99
+  }
+  slots.sort((a, b) => rank(a.name) - rank(b.name))
 
   const outputs: WorkflowSurface['outputs'] = []
   const referenced = new Set<string>()

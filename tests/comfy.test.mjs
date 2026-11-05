@@ -75,6 +75,24 @@ const listed = studio.comfyWorkflows().workflows
 assert.equal(listed.length, 1)
 assert.equal(listed[0].title, '演示')
 
+// A video workflow without a KSampler positive/negative pair (MiniMax style):
+// the prompt is a primitive consumed by a conditioning node, and baked-in
+// images must not be forced.
+{
+  const mini = {
+    266: { class_type: 'PrimitiveStringMultiline', inputs: { value: 'a silver ribbon' }, _meta: { title: 'Input Text (Prompt)' } },
+    277: { class_type: 'PrimitiveFloat', inputs: { value: 8 }, _meta: { title: 'Float (Duration)' } },
+    310: { class_type: 'MiniMaxH3AudioConditioningT8', inputs: { prompt: ['266', 0] } },
+    329: { class_type: 'LoadImage', inputs: { image: 'first.png' } },
+    306: { class_type: 'VHS_VideoCombine', inputs: { images: ['329', 0] } },
+  }
+  const surface = inferSurface('mini', mini, {})
+  const prompt = surface.slots.find(slot => slot.name === 'prompt')
+  assert.equal(prompt?.value, 'a silver ribbon')
+  assert.equal(surface.slots.find(slot => slot.name === 'duration')?.value, 8)
+  assert.equal(surface.slots.find(slot => slot.type === 'image')?.required, false)
+}
+
 // A reference image for the LoadImage slot.
 const refFile = path.join(process.env.DSH_WORKSPACE, 'ref.png')
 fs.writeFileSync(refFile, PNG)
