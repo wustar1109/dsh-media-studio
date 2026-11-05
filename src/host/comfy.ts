@@ -31,6 +31,8 @@ export interface WorkflowSlot {
   value?: string | number | boolean
   enumValues?: string[]
   label?: string
+  /** UI value is seconds; the node wants frame count (H3: 5 + 17k at 24fps). */
+  transform?: 'frames'
 }
 
 export interface WorkflowSurface {
@@ -118,7 +120,7 @@ export function assertApiWorkflow(value: unknown): ApiWorkflow {
   return nodes
 }
 
-const INTERNAL_INPUT = [/^model$/i, /^vae$/i, /^clip$/i, /^lora/i, /^batch_size$/i, /^filename_prefix$/i, /^noise_seed$/i, /^control_after_generate$/i, /^upload$/i]
+const INTERNAL_INPUT = [/^model$/i, /^vae$/i, /^clip$/i, /^lora/i, /^batch_size$/i, /^filename_prefix$/i, /^control_after_generate$/i, /^upload$/i]
 
 function isLink(value: unknown): boolean {
   return Array.isArray(value) && value.length === 2 && typeof value[0] === 'string' && typeof value[1] === 'number'
@@ -219,13 +221,17 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
   for (const [nodeId, node] of entries) {
     const inputs = node.inputs ?? {}
     const className = node.class_type ?? ''
-    for (const [key, value] of Object.entries(inputs)) {      if (isLink(value)) continue
+    for (const [key, value] of Object.entries(inputs)) {
+      if (isLink(value)) continue
       if (INTERNAL_INPUT.some(pattern => pattern.test(key))) continue
 
       // Explicit placeholders win over heuristics: the author said "this is a knob".
       const placeholders = placeholderNames(value)
       for (const name of placeholders) {
-        add({ name, type: 'string', nodeId, input: key, required: true, value: typeof value === 'string' ? value : undefined, label: key })
+        // A value that is *only* `{{name}}` means "no default": show an empty
+        // field instead of the literal placeholder text.
+        const only = typeof value === 'string' && new RegExp(`^\\{\\{\\s*${name}\\s*\\}\\}$`).test(value.trim())
+        add({ name, type: 'string', nodeId, input: key, required: true, value: only ? '' : typeof value === 'string' ? value : undefined, label: key })
       }
       if (placeholders.length > 0) continue
 
@@ -241,8 +247,19 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
       }
 
       let name: string | undefined = promptSources.get(`${nodeId}.${key}`)
-      if (name === undefined && typeof value === 'number' && /duration|seconds|length/i.test(node._meta?.title ?? '') && /^(value|duration|seconds|length)$/i.test(key)) {
+      let transform: 'frames' | undefined
+      if (name === undefined && typeof value === 'number' && /duration|seconds/i.test(node._meta?.title ?? '') && /^(value|duration|seconds)$/i.test(key)) {
         name = 'duration'
+      }
+      if (name === undefined && typeof value === 'number' && (key === 'length' || key === 'frames')) {
+        // MiniMax H3 conditions on a frame count (5 + 17k at 24fps). Show
+        // seconds and convert back when the workflow is applied.
+        if (/minimax|h3/i.test(className) || /minimax|h3/i.test(node._meta?.title ?? '')) {
+          name = 'duration'
+          transform = 'frames'
+        } else {
+          name = 'frames'
+        }
       }
       if (name === undefined) {
         if (key === 'seed' || key === 'noise_seed') name = 'seed'
@@ -256,13 +273,14 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
       if (name === undefined) continue
 
       const type = typeof value === 'number' ? 'number' : typeof value === 'boolean' ? 'boolean' : 'string'
-      const label = name === 'prompt' ? '提示词' : name === 'negative_prompt' ? '负面提示词' : name === 'duration' ? '时长（秒）' : (node._meta?.title ?? key)
-      add({ name, type, nodeId, input: key, required: false, value: value as string | number | boolean, label })
+      const label = name === 'prompt' ? '提示词' : name === 'negative_prompt' ? '负面提示词' : name === 'duration' ? '时长（秒）' : name === 'frames' ? '帧数（24fps）' : (node._meta?.title ?? key)
+      const shown = transform === 'frames' && typeof value === 'number' ? Math.round((value / 24) * 10) / 10 : value
+      add({ name, type, nodeId, input: key, required: false, value: shown as string | number | boolean, label, ...(transform === undefined ? {} : { transform }) })
     }
   }
 
   // Sort so prompt comes first: that is what the panel and the model fill in.
-  const order = ['prompt', 'negative_prompt', 'image', 'duration', 'width', 'height', 'seed', 'steps', 'cfg', 'denoise']
+  const order = ['prompt', 'negative_prompt', 'image', 'duration', 'frames', 'width', 'height', 'seed', 'steps', 'cfg', 'denoise']
   const rank = (name: string): number => {
     for (const [index, prefix] of order.entries()) {
       if (name === prefix || name.startsWith(`${prefix}_`)) return index
@@ -298,6 +316,12 @@ export function inferSurface(id: string, workflow: ApiWorkflow, meta: WorkflowMe
   }
 }
 
+/** MiniMax H3 frame alignment: 24fps, 5 + 17k frames. */
+export function framesForSeconds(seconds: number): number {
+  const base = Math.max(5, Math.round(seconds * 24))
+  return base + ((5 - (base % 17)) % 17)
+}
+
 /** Apply explicit `vars` and `{{placeholders}}` to a cloned workflow. */
 export function applyVars(workflow: ApiWorkflow, surface: WorkflowSurface, vars: Record<string, unknown>): { workflow: ApiWorkflow; applied: string[]; unknown: string[] } {
   const clone = JSON.parse(JSON.stringify(workflow)) as ApiWorkflow
@@ -312,7 +336,13 @@ export function applyVars(workflow: ApiWorkflow, surface: WorkflowSurface, vars:
     const node = clone[slot.nodeId]
     if (node === undefined) continue
     node.inputs = node.inputs ?? {}
-    node.inputs[slot.input] = coerce(slot, raw)
+    if (slot.transform === 'frames') {
+      const seconds = typeof raw === 'number' ? raw : Number.parseFloat(String(raw))
+      if (!Number.isFinite(seconds) || seconds <= 0) throw new Error(`变量 ${name} 需要正数秒`)
+      node.inputs[slot.input] = framesForSeconds(seconds)
+    } else {
+      node.inputs[slot.input] = coerce(slot, raw)
+    }
     applied.push(name)
   }
 

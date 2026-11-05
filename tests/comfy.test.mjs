@@ -96,6 +96,19 @@ assert.equal(listed[0].title, '演示')
   assert.equal(surface.slots.find(slot => slot.type === 'image')?.required, false)
 }
 
+// H3 conditioning wants frames; the panel shows seconds and applies 5 + 17k.
+{
+  const h3 = {
+    275: { class_type: 'RandomNoise', inputs: { noise_seed: 42 } },
+    310: { class_type: 'MiniMaxH3AudioConditioningT8', inputs: { prompt: 'x', length: 192, width: 1152, height: 640 } },
+  }
+  const s = inferSurface('h3', h3, {})
+  assert.equal(s.slots.find(slot => slot.name === 'duration')?.value, 8)
+  assert.equal(s.slots.find(slot => slot.name === 'seed')?.value, 42)
+  const appliedH3 = applyVars(h3, s, { duration: 10 })
+  assert.equal(appliedH3.workflow['310'].inputs.length, 243)
+}
+
 // A reference image for the LoadImage slot.
 const refFile = path.join(process.env.DSH_WORKSPACE, 'ref.png')
 fs.writeFileSync(refFile, PNG)

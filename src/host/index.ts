@@ -84,7 +84,7 @@ export function apply(ctx: HostContext, config: unknown): void {
 
 export { StudioService, API_BASE } from './studio.js'
 export { createRoutes } from './routes.js'
-export { inferSurface, applyVars, assertApiWorkflow, listWorkflows, saveWorkflow, getWorkflow } from './comfy.js'
+export { inferSurface, applyVars, assertApiWorkflow, listWorkflows, saveWorkflow, getWorkflow, framesForSeconds } from './comfy.js'
 export { mergeConfig, emptyConfig, resolveChannel } from './config.js'
 export { AssetLibrary } from './library.js'
 export { JobManager } from './jobs.js'
