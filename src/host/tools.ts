@@ -21,12 +21,15 @@ function jsonOutput(): ToolSpec['output'] {
     render: (_args, value) => {
       const blocks: Array<Record<string, unknown>> = []
       const marker = '__attachments'
-      const bag = value as Record<string, unknown> | null
-      if (bag !== null && typeof bag === 'object' && Array.isArray(bag[marker])) {
-        for (const item of bag[marker] as Array<Record<string, unknown>>) blocks.push(item)
-        delete bag[marker]
+      let textValue: unknown = value
+      if (value !== null && typeof value === 'object' && Array.isArray((value as Record<string, unknown>)[marker])) {
+        // Destructure instead of `delete`: the host may hand us a frozen object,
+        // and deleting a property from it throws in strict mode.
+        const { [marker]: attachments, ...rest } = value as Record<string, unknown>
+        for (const item of attachments as Array<Record<string, unknown>>) blocks.push(item)
+        textValue = rest
       }
-      blocks.unshift({ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) })
+      blocks.unshift({ type: 'text', text: typeof textValue === 'string' ? textValue : JSON.stringify(textValue, null, 2) })
       return blocks
     },
   }

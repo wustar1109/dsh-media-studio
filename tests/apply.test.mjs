@@ -59,6 +59,15 @@ for (const tool of tools) {
   assert.equal(typeof tool.execute, 'function')
   assert.equal(typeof tool.output.render, 'function')
 }
+// Rendering must not mutate the value (the host may freeze it).
+{
+  const jobTool = tools.find(tool => tool.name === 'media_job')
+  const value = Object.freeze({ ok: true, __attachments: [{ type: 'text', text: 'inline' }] })
+  const blocks = jobTool.output.render({}, value)
+  assert.equal(blocks.length, 2)
+  assert.ok(!String(blocks[0].text).includes('__attachments'))
+  assert.deepEqual(blocks[1], { type: 'text', text: 'inline' })
+}
 
 // The handler is the real dispatcher; drive it over a real socket.
 const server = http.createServer((req, res) => { void routes[0].handler(req, res) })
