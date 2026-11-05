@@ -78,6 +78,14 @@ export function CreateTab(props: CreateProps): React.ReactElement {
 
   const imageChannels = useMemo(() => props.channels.filter(item => item.capabilities.includes('image') && item.kind !== 'comfyui'), [props.channels])
   const videoChannels = useMemo(() => props.channels.filter(item => item.capabilities.includes('video') && item.kind !== 'comfyui'), [props.channels])
+  const comfyChannel = useMemo(() => props.channels.find(item => item.kind === 'comfyui'), [props.channels])
+  const pickChannel = (value: string): void => {
+    if (value === '__comfyui__') {
+      setMode('comfy')
+      return
+    }
+    setChannelId(value)
+  }
   const pool = mode === 'image' ? imageChannels : videoChannels
   const channel = pool.find(item => item.id === channelId) ?? pool.find(item => item.ready) ?? pool[0]
 
@@ -290,9 +298,12 @@ export function CreateTab(props: CreateProps): React.ReactElement {
               <>
                 <div className="ms-grid-2">
                   <Field label="通道">
-                    <select className="ms-select" value={channel?.id ?? ''} onChange={event => setChannelId(event.target.value)}>
+                    <select className="ms-select" value={channel?.id ?? ''} onChange={event => pickChannel(event.target.value)}>
                       {imageChannels.length === 0 ? <option value="">没有图像通道</option> : null}
                       {imageChannels.map(item => <option key={item.id} value={item.id}>{item.label}{item.ready ? '' : '（缺 Key）'}</option>)}
+                      {comfyChannel === undefined ? null : (
+                        <option value="__comfyui__">ComfyUI（{comfyChannel.ready ? '工作流模式' : '未配置地址'}）</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="模型">
@@ -326,9 +337,12 @@ export function CreateTab(props: CreateProps): React.ReactElement {
               <>
                 <div className="ms-grid-2">
                   <Field label="通道">
-                    <select className="ms-select" value={channel?.id ?? ''} onChange={event => setChannelId(event.target.value)}>
+                    <select className="ms-select" value={channel?.id ?? ''} onChange={event => pickChannel(event.target.value)}>
                       {videoChannels.length === 0 ? <option value="">没有视频通道</option> : null}
                       {videoChannels.map(item => <option key={item.id} value={item.id}>{item.label}{item.ready ? '' : '（缺 Key）'}</option>)}
+                      {comfyChannel === undefined ? null : (
+                        <option value="__comfyui__">ComfyUI（{comfyChannel.ready ? '工作流模式' : '未配置地址'}）</option>
+                      )}
                     </select>
                   </Field>
                   <Field label="模型">
@@ -380,6 +394,14 @@ export function CreateTab(props: CreateProps): React.ReactElement {
                 </div>
               </>
             )}
+
+            {mode !== 'storyboard' && comfyChannel !== undefined ? (
+              <button type="button" className="ms-comfy-link" onClick={() => setMode('comfy')}>
+                <Icon name="plug" size={13} />
+                <span>本地 ComfyUI {comfyChannel.ready ? '已就绪' : '地址未配置'}：用工作流模式出图 / 视频</span>
+                <Icon name="chevron" size={12} />
+              </button>
+            ) : null}
 
             {mode !== 'storyboard' ? (
               <div className="ms-refs">

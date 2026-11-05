@@ -150,6 +150,10 @@
 .ms-recent-item .ms-thumb{border-radius:9px}
 .ms-result-hint{display:flex;flex-direction:column;gap:4px;font-size:.76em;color:var(--ms-muted);border-top:1px solid var(--ms-line);padding-top:10px;word-break:break-all}
 
+.ms-comfy-link{appearance:none;border:1px solid color-mix(in srgb,var(--ms-accent) 28%,var(--ms-line));background:color-mix(in srgb,var(--ms-accent) 6%,transparent);color:var(--ms-accent);border-radius:10px;padding:7px 10px;font-size:.8em;display:inline-flex;align-items:center;gap:7px;cursor:pointer;text-align:left;align-self:flex-start;max-width:100%}
+.ms-comfy-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ms-comfy-link:hover{background:color-mix(in srgb,var(--ms-accent) 12%,transparent)}
+
 /* ── storyboard / shots ─────────────────────────────────── */
 .ms-storyboard{display:flex;flex-direction:column;gap:12px}
 .ms-shot-list{display:flex;flex-direction:column;gap:9px}
