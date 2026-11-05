@@ -71,6 +71,8 @@ export interface JobView {
   prompt?: string
   channel?: string
   model?: string
+  promptId?: string
+  canCollect?: boolean
   progress?: string
   error?: string
   createdAt: string

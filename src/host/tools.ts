@@ -82,6 +82,7 @@ export function jobView(job: JobRecord): Record<string, unknown> {
     channel: job.channelId,
     model: job.model,
     progress: job.progress?.stage,
+    ...(job.kind === 'comfy' && typeof job.params?.promptId === 'string' ? { promptId: job.params.promptId, canCollect: job.state === 'failed' } : {}),
     error: job.error,
     createdAt: new Date(job.createdAt).toISOString(),
     ...(job.finishedAt === undefined ? {} : { finishedAt: new Date(job.finishedAt).toISOString() }),
@@ -319,12 +320,12 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
 
   const jobTool: ToolSpec = {
     name: 'media_job',
-    description: '查询/等待/取消媒体任务。action=list 列出最近任务；get 查单个；wait 阻塞到完成；cancel 取消（云端渲染可能仍在计费）。',
+    description: '查询/等待/取消媒体任务。action=list 列出最近任务；get 查单个；wait 阻塞到完成；cancel 取消（云端渲染可能仍在计费）；collect 对超时的 ComfyUI 任务重新取回产物。',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        action: { type: 'string', enum: ['list', 'get', 'wait', 'cancel'], description: '默认 list' },
+        action: { type: 'string', enum: ['list', 'get', 'wait', 'cancel', 'collect'], description: '默认 list' },
         jobId: { type: 'string' },
         state: { type: 'string', enum: ['queued', 'running', 'succeeded', 'failed', 'cancelled'] },
         limit: { type: 'integer', minimum: 1, maximum: 50 },
@@ -343,6 +344,13 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
       if (action === 'cancel') {
         const ok = studio.jobs.cancel(jobId)
         return { ok, jobId, state: studio.jobs.stateOf(jobId), hint: '已在本机取消；云端任务未必真的停止计费。' }
+      }
+      if (action === 'collect') {
+        const job = await studio.collectComfyJob(jobId)
+        const view = jobView(job)
+        const attachments = await studio.attach(job.assets ?? [])
+        if (attachments.length > 0) view.__attachments = attachments
+        return view
       }
       if (action === 'wait') {
         const job = await studio.jobs.wait(jobId, asInt(args.timeoutMs, 120_000, 1000, 2_400_000))

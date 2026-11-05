@@ -83,7 +83,7 @@
 | `media_generate_video` | 文生/图生/首尾帧/多参考，按参考图数推断模式 |
 | `media_comfy_workflows` | 列/查看本机工作流：变量、图片槽位、输出 |
 | `media_comfy_run` | 传 vars + 图片跑工作流，异步或等待 |
-| `media_job` | 查/等/取消任务，读每镜状态 |
+| `media_job` | 查/等/取消任务，读每镜状态；`collect` 可对超时的 ComfyUI 任务重新取回产物 |
 | `media_library` | 搜索、详情、收藏、删除、登记本机文件 |
 | `media_storyboard` | 多镜批量生成，可选尾帧衔接 + 自动拼接 |
 | `media_concat` | 本机 ffmpeg 拼两段以上视频，零模型成本 |
@@ -125,7 +125,7 @@ dsh plugin --profile desktop add link:D:/path/to/dsh-media-studio
 dsh plugin --profile desktop add github:wustar1109/dsh-media-studio
 
 # 或从 Release 资产装入（带 SHA256SUMS）
-dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.1.6/dsh-media-studio-0.1.6.tgz
+dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.1.7/dsh-media-studio-0.1.7.tgz
 ```
 
 装完重启 DSH，左侧栏出现「媒体工作台」图标；主界面也会多一个同名面板。若宿主版本较老，入口在「设置 → 插件 → 已安装」。
@@ -150,7 +150,7 @@ dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/
 | `importRoots` | `[]` | 允许登记/读取的额外目录 |
 | `maxImageBytes` / `maxVideoBytes` | 40 MB / 512 MB | 下载上限 |
 | `videoTimeoutMs` | 40 min | 单条视频轮询上限 |
-| `comfyTimeoutMs` | 20 min | 单次工作流等待上限 |
+| `comfyTimeoutMs` | 60 min | 单次工作流等待上限；超时后可在任务页「重新收集产物」 |
 
 ## 6. HTTP API
 

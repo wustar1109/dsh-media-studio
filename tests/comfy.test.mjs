@@ -21,7 +21,7 @@ const PNG = Buffer.from(
 
 let historyCalls = 0
 let uploads = 0
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const json = value => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(value)) }
   if (url.pathname === '/system_stats') return json({ devices: [{ name: 'fake-gpu', vram_total: 8 * 1024 * 1024 * 1024 }] })
@@ -29,6 +29,9 @@ const server = http.createServer((req, res) => {
   if (url.pathname === '/prompt' && req.method === 'POST') return json({ prompt_id: 'p1' })
   if (url.pathname === '/history/p1') {
     historyCalls += 1
+    // The first probe is deliberately slow so the timeout test can expire
+    // between two polls instead of racing a localhost round-trip.
+    if (historyCalls === 1) await new Promise(resolve => setTimeout(resolve, 40))
     if (historyCalls < 2) return json({})
     return json({ p1: { status: { status_str: 'success', completed: true }, outputs: { 9: { images: [{ filename: 'out.png', subfolder: '', type: 'output' }] } } } })
   }
@@ -104,6 +107,19 @@ assert.equal(settled.assets.length, 1)
 assert.equal(settled.assets[0].origin, 'comfy')
 assert.ok(fs.existsSync(settled.assets[0].path))
 assert.equal(uploads, 1, 'the reference image was uploaded')
+
+// A render that outlives the wait budget must stay collectible by prompt id.
+{
+  historyCalls = 0
+  studio.updateConfig({ comfyTimeoutMs: 5 })
+  const slow = studio.startComfy({ workflowId: 'demo', vars: { prompt: 'slow render', seed: 4 }, images: [refFile] })
+  const timedOut = await studio.jobs.wait(slow.id, 15_000)
+  assert.equal(timedOut.state, 'failed')
+  assert.match(timedOut.error ?? '', /promptId=p1/)
+  const collected = await studio.collectComfyJob(slow.id)
+  assert.equal(collected.state, 'succeeded', collected.error)
+  assert.equal(collected.assets.length, 1)
+}
 
 // Offline ComfyUI fails instead of pretending to queue.
 studio.updateConfig({ channels: [{ id: 'comfyui', kind: 'comfyui', baseUrl: 'http://127.0.0.1:1' }] })

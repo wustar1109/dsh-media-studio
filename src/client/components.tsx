@@ -62,6 +62,7 @@ export function JobStatePill({ state }: { state: string }): React.ReactElement {
 export function JobCard(props: {
   job: JobView
   onCancel?: () => void
+  onCollect?: () => void
   onOpenAsset?: (asset: AssetView) => void
   onUseRef?: (asset: AssetView) => void
 }): React.ReactElement {
@@ -76,6 +77,9 @@ export function JobCard(props: {
         <span className="ms-job-time">{when(job.createdAt)}</span>
         {busy && props.onCancel !== undefined ? (
           <button type="button" className="ms-text-btn danger" onClick={props.onCancel}>取消</button>
+        ) : null}
+        {job.state === 'failed' && job.canCollect === true && props.onCollect !== undefined ? (
+          <button type="button" className="ms-text-btn" onClick={props.onCollect}>重新收集产物</button>
         ) : null}
       </div>
       <div className="ms-job-prompt">{job.prompt ?? '（无提示词）'}</div>

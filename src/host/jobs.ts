@@ -92,6 +92,29 @@ export class JobManager {
     return this.jobs.get(id)
   }
 
+  /** Persist a mutation made outside the executor (e.g. a late promptId). */
+  save(id: string): void {
+    const job = this.jobs.get(id)
+    if (job !== undefined) this.persist(job)
+  }
+
+  /**
+   * Settle a job from outside its executor. Used when a ComfyUI render finishes
+   * after the wait budget: the job was marked failed, and "collect" turns it
+   * into a succeeded record with the artifacts.
+   */
+  settle(id: string, patch: { state: JobState; assets?: AssetRecord[]; error?: string }): JobRecord | undefined {
+    const job = this.jobs.get(id)
+    if (job === undefined) return undefined
+    job.state = patch.state
+    if (patch.assets !== undefined) job.assets = patch.assets
+    if (patch.error === undefined) delete job.error
+    else job.error = patch.error
+    job.finishedAt = Date.now()
+    this.persist(job)
+    return job
+  }
+
   cancel(id: string): boolean {
     const job = this.jobs.get(id)
     if (job === undefined) return false

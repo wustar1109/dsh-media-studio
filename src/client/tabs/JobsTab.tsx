@@ -52,6 +52,11 @@ export function JobsTab({ jobs, onRefresh, onOpenAsset, notify }: JobsProps): Re
               key={job.jobId}
               job={job}
               onCancel={() => { void api.cancelJob(job.jobId).then(() => { notify('已请求取消'); onRefresh() }).catch(error => notify(String(error), 'error')) }}
+              onCollect={() => {
+                void api.collectJob(job.jobId)
+                  .then(result => { notify(`已取回 ${String(result.job.assets.length)} 个产物`, 'ok'); onRefresh() })
+                  .catch(error => notify(error instanceof Error ? error.message : String(error), 'error'))
+              }}
               onOpenAsset={onOpenAsset}
             />
           ))}

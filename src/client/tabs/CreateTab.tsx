@@ -467,6 +467,11 @@ export function CreateTab(props: CreateProps): React.ReactElement {
             <JobCard
               job={job}
               onCancel={() => { void api.cancelJob(job.jobId).then(() => props.notify('已请求取消')).catch(error => props.notify(String(error), 'error')) }}
+              onCollect={() => {
+                void api.collectJob(job.jobId)
+                  .then(result => { setJob(result.job); props.onProduced(); props.notify(`已取回 ${String(result.job.assets.length)} 个产物`, 'ok') })
+                  .catch(error => props.notify(error instanceof Error ? error.message : String(error), 'error'))
+              }}
               onUseRef={asset => {
                 setRefs(current => [...current, fromAsset(asset)].slice(0, 5))
                 props.notify('已加入参考图')

@@ -98,7 +98,7 @@ export function emptyConfig(): StudioConfig {
     maxImageBytes: 40 * 1024 * 1024,
     maxVideoBytes: 512 * 1024 * 1024,
     videoTimeoutMs: 40 * 60_000,
-    comfyTimeoutMs: 20 * 60_000,
+    comfyTimeoutMs: 60 * 60_000,
     ffmpegPath: null,
     importRoots: [],
     locale: 'auto',

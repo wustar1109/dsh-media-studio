@@ -40,7 +40,7 @@
         maxImageBytes: 41943040
         maxVideoBytes: 536870912
         videoTimeoutMs: 2400000
-        comfyTimeoutMs: 1200000
+        comfyTimeoutMs: 3600000
 
         # ── 本地工具 ──
         # 留空 = 依次查 PATH、~/.dsh-media-studio/bin、常见安装目录

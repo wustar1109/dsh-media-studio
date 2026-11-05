@@ -397,8 +397,11 @@ export class StudioService {
       }
       context.progress('正在提交到 ComfyUI…')
       const submitted = await client.queuePrompt(applied.workflow)
+      // Remember the prompt id before any failure: a render that outlives our
+      // wait budget can still be collected later by id.
+      context.job.params = { ...(context.job.params ?? {}), promptId: submitted.promptId }
+      this.jobs.save(context.job.id)
       context.progress('ComfyUI 执行中…')
-      const assets: AssetRecord[] = []
       const deadline = Date.now() + this.config.comfyTimeoutMs
       for (;;) {
         if (context.signal.aborted) throw new Error('cancelled')
@@ -407,22 +410,66 @@ export class StudioService {
           const state = historyState(history)
           if (state.state === 'failed') throw new Error(state.message ?? 'ComfyUI 执行失败')
           if (state.state === 'succeeded') {
-            const files = historyFiles(history)
-            if (files.length === 0) throw new Error('ComfyUI 执行完成但没有产物（工作流可能没有 SaveImage 节点）')
-            for (const file of files) {
-              const data = await client.view(file)
-              const asset = file.kind === 'video'
-                ? this.library.addBuffer(data, { ext: path.extname(file.filename) || '.mp4', kind: 'video', name: path.basename(file.filename, path.extname(file.filename)), meta: { prompt: String(vars.prompt ?? ''), channelId: channel.id, provider: 'comfyui', model: surface.title, jobId: context.job.id, origin: 'comfy' } })
-                : this.library.addBuffer(data, { ext: path.extname(file.filename) || '.png', kind: 'image', name: path.basename(file.filename, path.extname(file.filename)), meta: { prompt: String(vars.prompt ?? ''), channelId: channel.id, provider: 'comfyui', model: surface.title, jobId: context.job.id, origin: 'comfy' } })
-              assets.push(asset)
-            }
-            return { assets }
+            return { assets: await this.saveComfyHistory(client, history, { prompt: String(vars.prompt ?? ''), channelId: channel.id, model: surface.title, jobId: context.job.id }) }
           }
         }
-        if (Date.now() > deadline) throw new Error(`ComfyUI 超时（${String(Math.round(this.config.comfyTimeoutMs / 1000))}s）。任务可能还在跑，去 ComfyUI 队列确认。`)
+        if (Date.now() > deadline) {
+          throw new Error(`ComfyUI 等待超时（${String(Math.round(this.config.comfyTimeoutMs / 60000))} 分钟）。promptId=${submitted.promptId}，任务可能仍在渲染；稍后在「任务」里点「重新收集」即可取回产物。`)
+        }
         await new Promise(resolve => setTimeout(resolve, 1200))
       }
     })
+  }
+
+  /** Download and index every output file in one history entry. */
+  private async saveComfyHistory(
+    client: ComfyClient,
+    history: Record<string, unknown>,
+    meta: { prompt: string; channelId: string; model: string; jobId: string },
+  ): Promise<AssetRecord[]> {
+    const files = historyFiles(history)
+    if (files.length === 0) throw new Error('ComfyUI 执行完成但没有产物（工作流可能没有 SaveImage / VHS 输出节点）')
+    const assets: AssetRecord[] = []
+    for (const file of files) {
+      const data = await client.view(file)
+      const ext = path.extname(file.filename) || (file.kind === 'video' ? '.mp4' : '.png')
+      assets.push(this.library.addBuffer(data, {
+        ext,
+        kind: file.kind,
+        name: path.basename(file.filename, path.extname(file.filename)),
+        meta: { prompt: meta.prompt, channelId: meta.channelId, provider: 'comfyui', model: meta.model, jobId: meta.jobId, origin: 'comfy' },
+      }))
+    }
+    return assets
+  }
+
+  /**
+   * Turn a timed-out ComfyUI job into a finished one once the render lands.
+   * Throws when ComfyUI still has no result, so the caller can retry.
+   */
+  async collectComfyJob(jobId: string): Promise<JobRecord> {
+    const job = this.jobs.get(jobId)
+    if (job === undefined) throw new Error(`没有任务 ${jobId}`)
+    if (job.kind !== 'comfy') throw new Error('只有 ComfyUI 任务可以重新收集产物')
+    if (job.state === 'running' || job.state === 'queued') throw new Error('任务还在等待中，先让它自己完成')
+    const promptId = typeof job.params?.promptId === 'string' ? job.params.promptId : ''
+    if (promptId === '') throw new Error('这条任务没有记录 promptId（旧版本提交的），去 ComfyUI 历史里手动确认')
+    const built = this.comfyClient()
+    if (built.client === undefined) throw new Error(built.error ?? 'ComfyUI 未配置')
+    const history = await built.client.history(promptId)
+    if (history === undefined) throw new Error('ComfyUI 里还没有这个任务的结果，可能仍在渲染，稍后再试')
+    const state = historyState(history)
+    if (state.state === 'failed') {
+      return this.jobs.settle(jobId, { state: 'failed', error: state.message ?? 'ComfyUI 执行失败' })!
+    }
+    if (state.state !== 'succeeded') throw new Error('ComfyUI 仍在执行，稍后再试')
+    const assets = await this.saveComfyHistory(built.client, history, {
+      prompt: job.prompt ?? '',
+      channelId: job.channelId ?? 'comfyui',
+      model: job.model ?? 'ComfyUI',
+      jobId,
+    })
+    return this.jobs.settle(jobId, { state: 'succeeded', assets })!
   }
 
   private async uploadComfyImages(client: ComfyClient, surface: WorkflowSurface, images: Array<string | { slot?: string; path: string }>, signal: AbortSignal): Promise<Array<[string, string]>> {

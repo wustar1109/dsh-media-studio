@@ -160,6 +160,14 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
     },
     {
       method: 'POST',
+      pattern: /^\/jobs\/([^/]+)\/collect$/,
+      handler: async ({ params }) => {
+        const job = await studio.collectComfyJob(params[0]!)
+        return { ok: true, job: jobView(job) }
+      },
+    },
+    {
+      method: 'POST',
       pattern: /^\/generate\/image$/,
       handler: async ({ body }) => {
         const job = studio.startImage({

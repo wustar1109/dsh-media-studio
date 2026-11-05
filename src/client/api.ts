@@ -53,6 +53,7 @@ export const api = {
   jobs: (query = '') => call<{ jobs: JobView[] }>(`/jobs${query}`),
   job: (id: string) => call<{ job: JobView }>(`/jobs/${encodeURIComponent(id)}`),
   cancelJob: (id: string) => call<{ ok: boolean; state?: string }>(`/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: '{}' }),
+  collectJob: (id: string) => call<{ ok: boolean; job: JobView }>(`/jobs/${encodeURIComponent(id)}/collect`, { method: 'POST', body: '{}' }),
 
   generateImage: (body: Record<string, unknown>) => call<{ job: JobView }>('/generate/image', { method: 'POST', body: JSON.stringify(body) }),
   generateVideo: (body: Record<string, unknown>) => call<{ job: JobView }>('/generate/video', { method: 'POST', body: JSON.stringify(body) }),
