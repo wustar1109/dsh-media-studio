@@ -1,0 +1,47 @@
+# Insert one loader entry for dsh-media-studio.
+#
+# Install (published):
+#   dsh plugin --profile desktop add dsh-media-studio
+# Install (local checkout):
+#   dsh plugin --profile desktop add link:D:/path/to/dsh-media-studio
+#
+# Every field below is optional; the block only documents the defaults so they
+# are easy to change in one place. Precedence: profile config > panel
+# config.json > environment > built-in.
+- insert:
+    - id: media-studio
+      name: dsh-media-studio
+      config:
+        # ── 通道 ──
+        # 省略 = 使用内置的 6 个预设（openai / google / dashscope / ark / xai /
+        # comfyui）。只写想改的字段即可，其余从预设继承；新增通道必须带 id + kind。
+        # channels:
+        #   - id: openai
+        #     apiKeyEnv: OPENAI_API_KEY
+        #   - id: my-gateway
+        #     kind: openai-compat
+        #     label: 我的中转站
+        #     baseUrl: https://api.example.com/v1
+        #     apiKey: sk-...
+        #     imageModel: gpt-image-2
+        defaults: {}
+        #   image: openai
+        #   video: ark
+
+        # ── 产物与素材 ──
+        # 留空 = <当前工作区>/media-studio
+        outputDir: null
+        # 额外纳入素材库的目录（绝对路径）
+        libraryRoots: []
+        # 额外允许登记/读取的目录（工作区与输出目录始终允许）
+        importRoots: []
+
+        # ── 上限与超时 ──
+        maxImageBytes: 41943040
+        maxVideoBytes: 536870912
+        videoTimeoutMs: 2400000
+        comfyTimeoutMs: 1200000
+
+        # ── 本地工具 ──
+        # 留空 = 依次查 PATH、~/.dsh-media-studio/bin、常见安装目录
+        ffmpegPath: null

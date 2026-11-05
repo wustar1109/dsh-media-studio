@@ -1,0 +1,82 @@
+{
+  "name": "dsh-media-studio",
+  "version": "0.1.4",
+  "description": "One studio for DSH: cloud image + video generation and local ComfyUI workflows share one channel registry, one async job queue, one asset library and one panel.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots"
+      ]
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "docs/panel.png",
+    "docs/comparison.md"
+  ],
+  "meta": {
+    "title": "媒体工作台",
+    "description": "图像、视频与 ComfyUI 工作流共用一个通道表、一条任务队列、一个素材库。"
+  },
+  "icon": "./icon.svg",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node tests/apply.test.mjs && node tests/host.test.mjs && node tests/comfy.test.mjs && node tests/render.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "react": ">=18.2.0 <20"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "esbuild": "^0.28.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.7.3"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "image-generation",
+    "video-generation",
+    "comfyui",
+    "storyboard"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wustar1109/dsh-media-studio.git"
+  },
+  "homepage": "https://github.com/wustar1109/dsh-media-studio#readme",
+  "bugs": {
+    "url": "https://github.com/wustar1109/dsh-media-studio/issues"
+  },
+  "license": "Apache-2.0"
+}

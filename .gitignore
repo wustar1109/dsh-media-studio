@@ -1,0 +1,6 @@
+node_modules
+.npm-cache
+*.log
+*.tsbuildinfo
+docs/.shoot-tmp-*
+docs/panel-report.json

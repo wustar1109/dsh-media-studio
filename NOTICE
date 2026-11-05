@@ -1,0 +1,33 @@
+dsh-media-studio
+Copyright 2026 dsh-media-studio contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It is an independent implementation that reuses design ideas and adapted
+implementation patterns from the following open-source projects. No source
+files, data bundles or assets from those projects are redistributed here.
+
+1. dsh-comfyui-workbench
+   https://github.com/YuChenLiao/dsh-comfyui-workbench
+   Copyright (c) YuChenLiao
+   Licensed under the MIT License.
+   Used for: ComfyUI workflow IO-surface inference, variable application,
+   asset sidecar/index layout, and the dependency-free `ctx.get(...)` host
+   integration pattern.
+
+2. dsh-image-gen
+   https://github.com/shanliuling/dsh-image-gen
+   Copyright (c) shanliuling
+   Licensed under the Apache License, Version 2.0.
+   Used for: multi-provider image request shaping (OpenAI / Gemini / DashScope /
+   Ark / xAI), reference-image handling, and channel readiness rules.
+
+3. dsh-imagegen-video
+   https://github.com/q253595422/dsh-imagegen-video
+   Copyright (c) q253595422
+   Licensed under the Apache License, Version 2.0.
+   Used for: asynchronous video submit/poll/download protocol shapes,
+   storyboard continuity (tail-frame chaining) and ffmpeg concat behaviour.
+
+DeepSeek Harness is a separate project; this plugin is not affiliated with or
+endorsed by it.
