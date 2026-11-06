@@ -41,6 +41,7 @@ export interface AssetView {
   name: string
   path: string
   url: string
+  downloadUrl: string
   bytes: number
   width?: number
   height?: number

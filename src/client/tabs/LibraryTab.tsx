@@ -226,7 +226,7 @@ export function LibraryTab({ focusAssetId, version, onUseAsReference, notify, on
               </dl>
               <div className="ms-detail-actions">
                 <Button size="sm" variant="primary" icon="sparkles" onClick={() => onUseAsReference(detail)}>作参考图</Button>
-                <a className="ms-btn ghost sm" href={detail.url} download={detail.name}><Icon name="download" size={14} /><span>下载</span></a>
+                <a className="ms-btn ghost sm" href={detail.downloadUrl}><Icon name="download" size={14} /><span>下载</span></a>
                 <Button size="sm" variant="ghost" icon="star" onClick={() => { void toggleFavorite(detail) }}>{detail.favorite ? '取消收藏' : '收藏'}</Button>
                 <Button size="sm" variant="danger" icon="trash" onClick={() => { void remove(detail) }}>删除</Button>
               </div>

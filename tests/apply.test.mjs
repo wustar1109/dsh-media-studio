@@ -67,6 +67,12 @@ for (const tool of tools) {
   assert.equal(blocks.length, 2)
   assert.ok(!String(blocks[0].text).includes('__attachments'))
   assert.deepEqual(blocks[1], { type: 'text', text: 'inline' })
+
+  const withAsset = jobTool.output.render({}, Object.freeze({
+    ok: true,
+    assets: [{ id: 'a1', name: 'x.png', downloadUrl: '/media-studio/api/asset/a1?download=1' }],
+  }))
+  assert.match(String(withAsset[0].text), /下载原图：\[下载\]\(\/media-studio\/api\/asset\/a1\?download=1\)/)
 }
 
 // The handler is the real dispatcher; drive it over a real socket.

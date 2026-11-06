@@ -29,7 +29,22 @@ function jsonOutput(): ToolSpec['output'] {
         for (const item of attachments as Array<Record<string, unknown>>) blocks.push(item)
         textValue = rest
       }
-      blocks.unshift({ type: 'text', text: typeof textValue === 'string' ? textValue : JSON.stringify(textValue, null, 2) })
+      let text = typeof textValue === 'string' ? textValue : JSON.stringify(textValue, null, 2)
+      // Inline images in the chat are previews; add explicit Save-As links so a
+      // click downloads the original instead of opening another preview.
+      const links: string[] = []
+      if (textValue !== null && typeof textValue === 'object') {
+        const bag = textValue as Record<string, unknown>
+        const list = Array.isArray(bag.assets) ? bag.assets : Array.isArray(bag.items) ? bag.items : []
+        list.forEach((item, index) => {
+          if (item === null || typeof item !== 'object') return
+          const asset = item as Record<string, unknown>
+          if (typeof asset.downloadUrl !== 'string') return
+          links.push(`[下载${list.length > 1 ? ` ${String(index + 1)}` : ''}](${asset.downloadUrl})`)
+        })
+      }
+      if (links.length > 0) text += `\n\n下载原图：${links.join(' · ')}`
+      blocks.unshift({ type: 'text', text })
       return blocks
     },
   }
@@ -62,6 +77,7 @@ export function assetView(asset: AssetRecord): Record<string, unknown> {
     name: asset.name,
     path: asset.path,
     url: `/media-studio/api/asset/${asset.id}`,
+    downloadUrl: `/media-studio/api/asset/${asset.id}?download=1`,
     bytes: asset.bytes,
     ...(asset.width === undefined ? {} : { width: asset.width }),
     ...(asset.height === undefined ? {} : { height: asset.height }),

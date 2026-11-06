@@ -42,7 +42,7 @@ async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> 
 }
 
 /** Serve one asset with byte-range support (videos need it to seek). */
-function serveFile(req: IncomingMessage, res: ServerResponse, file: string): void {
+function serveFile(req: IncomingMessage, res: ServerResponse, file: string, downloadName?: string): void {
   let stat: fs.Stats
   try {
     stat = fs.statSync(file)
@@ -56,8 +56,9 @@ function serveFile(req: IncomingMessage, res: ServerResponse, file: string): voi
     'content-type': mime,
     'accept-ranges': 'bytes',
     'cache-control': 'private, max-age=60',
+    ...(downloadName === undefined ? {} : { 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(downloadName)}` }),
   }
-  if (range === undefined) {
+  if (range === undefined || downloadName !== undefined) {
     res.writeHead(200, { ...baseHeaders, 'content-length': stat.size })
     if (req.method === 'HEAD') { res.end(); return }
     fs.createReadStream(file).pipe(res)
@@ -97,6 +98,8 @@ interface RouteResult {
   status?: number
   json?: unknown
   file?: string
+  /** Set to force a Save-As response with this filename. */
+  downloadName?: string
 }
 
 export function createRoutes(studio: StudioService, ctx: HostContext): { dispatch: (req: IncomingMessage, res: ServerResponse) => Promise<void> } {
@@ -357,11 +360,11 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
     {
       method: 'GET',
       pattern: /^\/asset\/([^/]+)$/,
-      handler: ({ params }) => {
+      handler: ({ params, url }) => {
         const asset = studio.getLibrary().get(decodeURIComponent(params[0]!))
         if (asset === undefined) return { status: 404, json: { ok: false, message: '素材不存在' } }
         if (!fs.existsSync(asset.path)) return { status: 404, json: { ok: false, message: '文件已不在磁盘上' } }
-        return { file: asset.path }
+        return { file: asset.path, ...(url.searchParams.get('download') === '1' ? { downloadName: asset.name } : {}) }
       },
     },
     {
@@ -409,7 +412,8 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
       const body = method === 'POST' ? await readBody(req) : {}
       const result = await guard(matched.route.handler)({ params: matched.params, body, url, req, res }) as RouteResult | Record<string, unknown>
       if (typeof result === 'object' && result !== null && ('file' in result)) {
-        serveFile(req, res, (result as { file: string }).file)
+        const file = (result as { file: string }).file
+        serveFile(req, res, file, (result as { downloadName?: string }).downloadName)
         return
       }
       const status = typeof result === 'object' && result !== null && typeof (result as { status?: unknown }).status === 'number'

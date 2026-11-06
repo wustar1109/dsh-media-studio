@@ -159,6 +159,10 @@ studio.updateConfig({
   assert.equal(asset.status, 206)
   assert.equal(asset.headers.get('content-range')?.startsWith('bytes 0-3/'), true)
 
+  const download = await fetch(`${apiBase}/media-studio/api/asset/${assetId}?download=1`, { headers: { range: 'bytes=0-3' } })
+  assert.equal(download.status, 200)
+  assert.match(download.headers.get('content-disposition') ?? '', /^attachment; filename\*=UTF-8''/)
+
   const submitted = await fetch(`${apiBase}/media-studio/api/generate/image`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
