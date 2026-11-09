@@ -237,6 +237,82 @@ export class StudioService {
     }
   }
 
+  /**
+   * Ask the upstream for its model list, with the built-in catalog as fallback.
+   * Uses the values currently typed in the panel when given, so the list can be
+   * fetched right after entering a key (before saving).
+   */
+  async listModels(id: string, overrides: { apiKey?: string; baseUrl?: string } = {}): Promise<{
+    ok: boolean
+    models: string[]
+    image: string[]
+    video: string[]
+    detail: string
+    source: 'remote' | 'catalog'
+  }> {
+    const channel = this.channelById(id)
+    const empty = { models: [] as string[], image: [] as string[], video: [] as string[], source: 'catalog' as const }
+    if (channel === undefined) return { ok: false, ...empty, detail: `没有通道 ${id}` }
+    const catalog = [...new Set([
+      ...(channel.models?.image ?? []),
+      ...(channel.models?.video ?? []),
+      channel.imageModel ?? '',
+      channel.videoModel ?? '',
+    ].filter(item => item.trim() !== ''))]
+    const fallback = (detail: string): { ok: false; models: string[]; image: string[]; video: string[]; detail: string; source: 'catalog' } => ({
+      ok: false,
+      models: catalog,
+      image: classifyModels(catalog, 'image'),
+      video: classifyModels(catalog, 'video'),
+      detail,
+      source: 'catalog',
+    })
+    if (channel.kind === 'comfyui') return { ...fallback('ComfyUI 的模型由工作流决定，不在这里拉取'), ok: false }
+
+    const key = overrides.apiKey?.trim() || apiKeyOf(channel)
+    const base = normalizeBaseUrl(overrides.baseUrl?.trim() || channel.baseUrl || '')
+    if (key === '') return fallback(`填写 API Key 后自动拉取（当前显示内置模型）`)
+    if (base === '') return fallback('缺少 baseUrl')
+
+    try {
+      const headers: Record<string, string> = channel.kind === 'google'
+        ? { 'x-goog-api-key': key }
+        : { authorization: `Bearer ${key}` }
+      let url = `${base}/models`
+      if (channel.kind === 'dashscope') {
+        // DashScope's OpenAI-compatible model list lives under another prefix.
+        try { url = `${new URL(base).origin}/compatible-mode/v1/models` } catch { /* keep base */ }
+      }
+      const response = await fetch(url, {
+        headers: { ...headers, ...channel.headers },
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!response.ok) {
+        if (response.status === 401 || response.status === 403) return fallback('鉴权失败：API Key 无效或没有读取模型的权限')
+        return fallback(`上游没有返回模型列表（HTTP ${String(response.status)}），显示内置模型`)
+      }
+      const payload = await response.json() as { data?: unknown; models?: unknown }
+      const list = Array.isArray(payload.data) ? payload.data : Array.isArray(payload.models) ? payload.models : []
+      const models = [...new Set(list.flatMap(item => {
+        if (item === null || typeof item !== 'object') return []
+        const bag = item as Record<string, unknown>
+        const id = typeof bag.id === 'string' ? bag.id : typeof bag.name === 'string' ? bag.name.replace(/^models\//, '') : ''
+        return id === '' ? [] : [id]
+      }))]
+      if (models.length === 0) return fallback('上游返回了空模型列表，显示内置模型')
+      return {
+        ok: true,
+        models,
+        image: classifyModels(models, 'image'),
+        video: classifyModels(models, 'video'),
+        detail: `已从上游拉取 ${String(models.length)} 个模型`,
+        source: 'remote',
+      }
+    } catch (error) {
+      return fallback(`拉取失败：${error instanceof Error ? error.message : String(error)}；显示内置模型`)
+    }
+  }
+
   // ── references ────────────────────────────────────────────────────────────
 
   /** Asset id, absolute path, or path inside the workspace. */
@@ -789,6 +865,13 @@ function extForMime(mime: string): string {
   if (mime.includes('quicktime')) return '.mov'
   if (mime.includes('matroska')) return '.mkv'
   return '.mp4'
+}
+
+const IMAGE_MODEL_RE = /(image|dall-e|seedream|flux|sdxl|stable-diffusion|qwen-image|imagen|banana|kolors|glm-image|midjourney)/i
+const VIDEO_MODEL_RE = /(sora|veo|wan2|wanx|seedance|kling|hailuo|video|imagine-video)/i
+
+function classifyModels(models: string[], kind: 'image' | 'video'): string[] {
+  return models.filter(model => kind === 'video' ? VIDEO_MODEL_RE.test(model) && !/image/i.test(model) : IMAGE_MODEL_RE.test(model))
 }
 
 function systemSummary(system: Record<string, unknown> | undefined): string {

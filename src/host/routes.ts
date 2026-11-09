@@ -141,6 +141,17 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
       },
     },
     {
+      method: 'POST',
+      pattern: /^\/channels\/models$/,
+      handler: async ({ body }) => {
+        const id = typeof body.id === 'string' ? body.id : ''
+        return await studio.listModels(id, {
+          ...(typeof body.apiKey === 'string' ? { apiKey: body.apiKey } : {}),
+          ...(typeof body.baseUrl === 'string' ? { baseUrl: body.baseUrl } : {}),
+        })
+      },
+    },
+    {
       method: 'GET',
       pattern: /^\/jobs$/,
       handler: ({ url }) => {

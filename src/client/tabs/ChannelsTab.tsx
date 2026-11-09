@@ -53,6 +53,8 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
   const [openId, setOpenId] = useState<string | null>(null)
   const [testing, setTesting] = useState<string | null>(null)
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; detail: string }>>({})
+  const [modelOptions, setModelOptions] = useState<Record<string, { image: string[]; video: string[]; all: string[]; detail: string; source: string }>>({})
+  const [loadingModels, setLoadingModels] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [newKind, setNewKind] = useState<ChannelKind>('openai')
@@ -117,6 +119,36 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
     }
   }
 
+  const fetchModels = useCallback(async (id: string, silent = false): Promise<void> => {
+    const draft = drafts[id]
+    if (draft?.kind === 'comfyui') return
+    setLoadingModels(id)
+    try {
+      const result = await api.listModels(id, {
+        ...(draft?.apiKey.trim() === undefined || draft?.apiKey.trim() === '' ? {} : { apiKey: draft.apiKey.trim() }),
+        ...(draft?.baseUrl.trim() === undefined || draft?.baseUrl.trim() === '' ? {} : { baseUrl: draft.baseUrl.trim() }),
+      })
+      setModelOptions(current => ({
+        ...current,
+        [id]: { image: result.image, video: result.video, all: result.models, detail: result.detail, source: result.source },
+      }))
+      if (!silent && !result.ok) notify(result.detail, 'error')
+    } catch (error) {
+      if (!silent) notify(error instanceof Error ? error.message : String(error), 'error')
+    } finally {
+      setLoadingModels(null)
+    }
+  }, [drafts, notify])
+
+  useEffect(() => {
+    if (openId === null) return
+    const channel = config.channels.find(item => item.id === openId)
+    if (channel === undefined || channel.kind === 'comfyui') return
+    if (modelOptions[openId] !== undefined) return
+    // Auto-pull once per channel when it is expanded.
+    void fetchModels(openId, true)
+  }, [openId, config, modelOptions, fetchModels])
+
   const test = async (id: string): Promise<void> => {
     setTesting(id)
     try {
@@ -129,7 +161,10 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
       setTestResult(current => ({ ...current, [id]: { ok: result.ok, detail: `${result.detail}${result.latencyMs === undefined ? '' : ` · ${String(result.latencyMs)}ms`}` } }))
       // A successful probe means the typed values work: persist them so the
       // next generation does not fail on an unsaved key.
-      if (result.ok && draft !== undefined) await saveAll()
+      if (result.ok && draft !== undefined) {
+        await saveAll()
+        void fetchModels(id, true)
+      }
     } catch (error) {
       setTestResult(current => ({ ...current, [id]: { ok: false, detail: error instanceof Error ? error.message : String(error) } }))
     } finally {
@@ -184,6 +219,9 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
         {config.channels.map(channel => {
           const draft = drafts[channel.id] ?? draftOf(channel)
           const open = openId === channel.id
+          const pulled = modelOptions[channel.id]
+          const imageOptions = pulled === undefined ? (channel.models?.image ?? []) : (pulled.image.length > 0 ? pulled.image : pulled.all)
+          const videoOptions = pulled === undefined ? (channel.models?.video ?? []) : (pulled.video.length > 0 ? pulled.video : pulled.all)
           return (
             <div className={`ms-channel${open ? ' open' : ''}`} key={channel.id}>
               <button type="button" className="ms-channel-head" onClick={() => setOpenId(open ? null : channel.id)}>
@@ -200,7 +238,7 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
                   <div className="ms-grid-2">
                     <Field label="名称"><input className="ms-input" value={draft.label} onChange={event => patchDraft(channel.id, { label: event.target.value })} /></Field>
                     <Field label="地址" hint={draft.kind === 'comfyui' ? '填 ComfyUI 的根地址，可省略 http://' : '不含尾斜杠；Google 填到 /v1beta，其他填到 /v1 或 /api/v3'}>
-                      <input className="ms-input" value={draft.baseUrl} onChange={event => patchDraft(channel.id, { baseUrl: event.target.value })} />
+                      <input className="ms-input" value={draft.baseUrl} onChange={event => patchDraft(channel.id, { baseUrl: event.target.value })} onBlur={() => { if (draft.baseUrl.trim() !== '') void fetchModels(channel.id, true) }} />
                     </Field>
                   </div>
                   {draft.kind === 'comfyui' ? (
@@ -212,15 +250,41 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
                     <>
                       <div className="ms-grid-2">
                         <Field label="API Key" hint={channel.keySource === 'env' ? `当前来自环境变量 ${channel.apiKeyEnv ?? ''}；填写会覆盖` : '留空保持现有 Key'}>
-                          <input className="ms-input" type="password" value={draft.apiKey} placeholder={channel.keySource === 'inline' ? '已保存（留空不修改）' : 'sk-…'} onChange={event => patchDraft(channel.id, { apiKey: event.target.value })} />
+                          <input className="ms-input" type="password" value={draft.apiKey} placeholder={channel.keySource === 'inline' ? '已保存（留空不修改）' : 'sk-…'} onChange={event => patchDraft(channel.id, { apiKey: event.target.value })} onBlur={() => { if (draft.apiKey.trim() !== '') void fetchModels(channel.id, true) }} />
                         </Field>
                         <Field label="环境变量名" hint="没有 Key 时读这个变量">
                           <input className="ms-input" value={draft.apiKeyEnv} placeholder="OPENAI_API_KEY" onChange={event => patchDraft(channel.id, { apiKeyEnv: event.target.value })} />
                         </Field>
                       </div>
                       <div className="ms-grid-2">
-                        <Field label="默认图像模型"><input className="ms-input" value={draft.imageModel} onChange={event => patchDraft(channel.id, { imageModel: event.target.value })} /></Field>
-                        <Field label="默认视频模型"><input className="ms-input" value={draft.videoModel} onChange={event => patchDraft(channel.id, { videoModel: event.target.value })} /></Field>
+                        <Field
+                          label="默认图像模型"
+                          hint={pulled === undefined ? '展开通道后自动拉取' : pulled.detail}
+                          right={(
+                            <button type="button" className="ms-text-btn" disabled={loadingModels === channel.id} onClick={() => { void fetchModels(channel.id) }}>
+                              {loadingModels === channel.id ? '拉取中…' : '重新拉取'}
+                            </button>
+                          )}
+                        >
+                          <input className="ms-input" list={`ms-image-models-${channel.id}`} value={draft.imageModel} placeholder="自动拉取后可下拉选择" onChange={event => patchDraft(channel.id, { imageModel: event.target.value })} />
+                          <datalist id={`ms-image-models-${channel.id}`}>
+                            {imageOptions.map(item => <option key={item} value={item} />)}
+                          </datalist>
+                        </Field>
+                        <Field
+                          label="默认视频模型"
+                          hint={pulled === undefined ? '展开通道后自动拉取' : pulled.detail}
+                          right={(
+                            <button type="button" className="ms-text-btn" disabled={loadingModels === channel.id} onClick={() => { void fetchModels(channel.id) }}>
+                              {loadingModels === channel.id ? '拉取中…' : '重新拉取'}
+                            </button>
+                          )}
+                        >
+                          <input className="ms-input" list={`ms-video-models-${channel.id}`} value={draft.videoModel} placeholder="自动拉取后可下拉选择" onChange={event => patchDraft(channel.id, { videoModel: event.target.value })} />
+                          <datalist id={`ms-video-models-${channel.id}`}>
+                            {videoOptions.map(item => <option key={item} value={item} />)}
+                          </datalist>
+                        </Field>
                       </div>
                     </>
                   )}

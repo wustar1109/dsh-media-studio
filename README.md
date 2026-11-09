@@ -78,7 +78,7 @@
 - **ComfyUI 工作流**：支持**上传 `.json` 文件**（按钮或拖入窗口）或直接粘贴 API 格式 JSON；UI 格式会当场提示重新导出。已配置的 ComfyUI 也会出现在图像/视频的通道下拉里，选中即切到工作流模式。没有 KSampler 的视频工作流（如 MiniMax H3 / WAN）也能从 conditioning 的 `prompt` 或标题为 Prompt/Text 的字符串节点识别出提示词；H3 的 `length` 会按 24fps 的 `5 + 17k` 规则在「秒」与「帧」之间转换，seed 与尺寸也会暴露；模板自带图片的槽位是可选的。
 - **任务**：全部异步任务、状态、进度、取消、产物。
 - **素材库**：搜索 / 图片视频筛选 / 收藏 / 详情 / 下载 / 多选视频拼接 / 登记本机文件。
-- **通道**：通道增删改测、默认通道、输出目录、ffmpeg 路径、导入白名单、ComfyUI 工作流启停。
+- **通道**：通道增删改测、默认通道、输出目录、ffmpeg 路径、导入白名单、ComfyUI 工作流启停。展开通道时自动从上游 `/models` 拉取模型列表（图像/视频自动分类，失败回退内置目录），也可手动「重新拉取」。
 
 ## 2. 安装
 
@@ -92,7 +92,7 @@ dsh plugin --profile desktop add link:D:/path/to/dsh-media-studio
 dsh plugin --profile desktop add github:wustar1109/dsh-media-studio
 
 # 或从 Release 资产装入（带 SHA256SUMS）
-dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.2.1/dsh-media-studio-0.2.1.tgz
+dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.2.2/dsh-media-studio-0.2.2.tgz
 ```
 
 装完重启 DSH，左侧栏出现「媒体工作台」图标；主界面也会多一个同名面板。若宿主版本较老，入口在「设置 → 插件 → 已安装」。

@@ -49,6 +49,25 @@ export const api = {
       ...(typeof bag?.latencyMs === 'number' ? { latencyMs: bag.latencyMs } : {}),
     }
   },
+  /** Model catalog for one channel; `ok:false` still carries the built-in list. */
+  listModels: async (id: string, overrides: { apiKey?: string; baseUrl?: string } = {}): Promise<{ ok: boolean; models: string[]; image: string[]; video: string[]; detail: string; source: 'remote' | 'catalog' }> => {
+    const response = await fetch(`${BASE}/channels/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, ...overrides }),
+    })
+    const payload = await response.json().catch(() => null) as Record<string, unknown> | null
+    if (!response.ok) throw new Error(typeof payload?.message === 'string' ? payload.message : `请求失败：HTTP ${String(response.status)}`)
+    const strings = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+    return {
+      ok: payload?.ok === true,
+      models: strings(payload?.models),
+      image: strings(payload?.image),
+      video: strings(payload?.video),
+      detail: typeof payload?.detail === 'string' ? payload.detail : '',
+      source: payload?.source === 'remote' ? 'remote' : 'catalog',
+    }
+  },
 
   jobs: (query = '') => call<{ jobs: JobView[] }>(`/jobs${query}`),
   job: (id: string) => call<{ job: JobView }>(`/jobs/${encodeURIComponent(id)}`),

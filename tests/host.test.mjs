@@ -27,6 +27,11 @@ let imageCalls = 0
 let videoCalls = 0
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+  if (req.method === 'GET' && url.pathname === '/v1/models') {
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ id: 'gpt-image-1' }, { id: 'sora-2' }, { id: 'gpt-4o' }] }))
+    return
+  }
   if (req.method === 'POST' && url.pathname === '/v1/images/generations') {
     imageCalls += 1
     res.writeHead(200, { 'content-type': 'application/json' })
@@ -157,6 +162,16 @@ studio.updateConfig({
     body: JSON.stringify({ id: 'openai', apiKey: 'typed-key', baseUrl: base }),
   }).then(response => response.json())
   assert.equal(probe.ok, true, probe.detail)
+
+  const models = await fetch(`${apiBase}/media-studio/api/channels/models`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'openai', apiKey: 'typed-key', baseUrl: base }),
+  }).then(response => response.json())
+  assert.equal(models.ok, true, models.detail)
+  assert.ok(models.models.includes('gpt-image-1'))
+  assert.ok(models.image.includes('gpt-image-1'))
+  assert.ok(models.video.includes('sora-2'))
 
   const library = await fetch(`${apiBase}/media-studio/api/library?limit=5`).then(response => response.json())
   assert.equal(library.ok, true)
