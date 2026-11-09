@@ -300,12 +300,14 @@ export class StudioService {
         return id === '' ? [] : [id]
       }))]
       if (models.length === 0) return fallback('上游返回了空模型列表，显示内置模型')
+      const image = classifyModels(models, 'image')
+      const video = classifyModels(models, 'video')
       return {
         ok: true,
         models,
-        image: classifyModels(models, 'image'),
-        video: classifyModels(models, 'video'),
-        detail: `已从上游拉取 ${String(models.length)} 个模型`,
+        image,
+        video,
+        detail: `已拉取 ${String(models.length)} 个模型（图像 ${String(image.length)} / 视频 ${String(video.length)}，其余为对话模型）`,
         source: 'remote',
       }
     } catch (error) {

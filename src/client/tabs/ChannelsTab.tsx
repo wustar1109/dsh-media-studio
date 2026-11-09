@@ -55,6 +55,7 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
   const [testResult, setTestResult] = useState<Record<string, { ok: boolean; detail: string }>>({})
   const [modelOptions, setModelOptions] = useState<Record<string, { image: string[]; video: string[]; all: string[]; detail: string; source: string }>>({})
   const [loadingModels, setLoadingModels] = useState<string | null>(null)
+  const [customModel, setCustomModel] = useState<Record<string, boolean>>({})
   const [saving, setSaving] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
   const [newKind, setNewKind] = useState<ChannelKind>('openai')
@@ -222,6 +223,8 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
           const pulled = modelOptions[channel.id]
           const imageOptions = pulled === undefined ? (channel.models?.image ?? []) : (pulled.image.length > 0 ? pulled.image : pulled.all)
           const videoOptions = pulled === undefined ? (channel.models?.video ?? []) : (pulled.video.length > 0 ? pulled.video : pulled.all)
+          const imageKey = `${channel.id}:image`
+          const videoKey = `${channel.id}:video`
           return (
             <div className={`ms-channel${open ? ' open' : ''}`} key={channel.id}>
               <button type="button" className="ms-channel-head" onClick={() => setOpenId(open ? null : channel.id)}>
@@ -266,11 +269,29 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
                             </button>
                           )}
                         >
-                          <input className="ms-input" list={`ms-image-models-${channel.id}`} value={draft.imageModel} placeholder="自动拉取后可下拉选择" onChange={event => patchDraft(channel.id, { imageModel: event.target.value })} />
-                          <datalist id={`ms-image-models-${channel.id}`}>
-                            {imageOptions.map(item => <option key={item} value={item} />)}
-                          </datalist>
-                        </Field>
+                          {customModel[imageKey] === true || imageOptions.length === 0 ? (
+                            <div className="ms-model-row">
+                              <input className="ms-input" value={draft.imageModel} placeholder="手填模型 ID" onChange={event => patchDraft(channel.id, { imageModel: event.target.value })} />
+                              {imageOptions.length > 0 ? <button type="button" className="ms-text-btn" onClick={() => setCustomModel(current => ({ ...current, [imageKey]: false }))}>从列表选</button> : null}
+                            </div>
+                          ) : (
+                            <select
+                              className="ms-select"
+                              value={draft.imageModel}
+                              onChange={event => {
+                                if (event.target.value === '__custom__') {
+                                  setCustomModel(current => ({ ...current, [imageKey]: true }))
+                                  return
+                                }
+                                patchDraft(channel.id, { imageModel: event.target.value })
+                              }}
+                            >
+                              {draft.imageModel === '' ? <option value="">选择图像模型…</option> : null}
+                              {draft.imageModel !== '' && !imageOptions.includes(draft.imageModel) ? <option value={draft.imageModel}>{draft.imageModel}（当前）</option> : null}
+                              {imageOptions.map(item => <option key={item} value={item}>{item}</option>)}
+                              <option value="__custom__">自定义…</option>
+                            </select>
+                          )}                        </Field>
                         <Field
                           label="默认视频模型"
                           hint={pulled === undefined ? '展开通道后自动拉取' : pulled.detail}
@@ -280,10 +301,29 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
                             </button>
                           )}
                         >
-                          <input className="ms-input" list={`ms-video-models-${channel.id}`} value={draft.videoModel} placeholder="自动拉取后可下拉选择" onChange={event => patchDraft(channel.id, { videoModel: event.target.value })} />
-                          <datalist id={`ms-video-models-${channel.id}`}>
-                            {videoOptions.map(item => <option key={item} value={item} />)}
-                          </datalist>
+                          {customModel[videoKey] === true || videoOptions.length === 0 ? (
+                            <div className="ms-model-row">
+                              <input className="ms-input" value={draft.videoModel} placeholder="手填模型 ID" onChange={event => patchDraft(channel.id, { videoModel: event.target.value })} />
+                              {videoOptions.length > 0 ? <button type="button" className="ms-text-btn" onClick={() => setCustomModel(current => ({ ...current, [videoKey]: false }))}>从列表选</button> : null}
+                            </div>
+                          ) : (
+                            <select
+                              className="ms-select"
+                              value={draft.videoModel}
+                              onChange={event => {
+                                if (event.target.value === '__custom__') {
+                                  setCustomModel(current => ({ ...current, [videoKey]: true }))
+                                  return
+                                }
+                                patchDraft(channel.id, { videoModel: event.target.value })
+                              }}
+                            >
+                              {draft.videoModel === '' ? <option value="">选择视频模型…</option> : null}
+                              {draft.videoModel !== '' && !videoOptions.includes(draft.videoModel) ? <option value={draft.videoModel}>{draft.videoModel}（当前）</option> : null}
+                              {videoOptions.map(item => <option key={item} value={item}>{item}</option>)}
+                              <option value="__custom__">自定义…</option>
+                            </select>
+                          )}
                         </Field>
                       </div>
                     </>
