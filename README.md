@@ -56,13 +56,14 @@
 - `/api/asset/:id` 支持 **HTTP Range**，视频可拖动进度条；只服务已登记的资产，不做出任意路径的文件出口。
 - 本机已有媒体用「登记文件」纳入，不复制；导入受工作区 + `importRoots` 白名单约束。
 
-### 1.4 统一工具面（9 个）
+### 1.4 统一工具面（10 个）
 
 | 工具 | 用途 |
 |---|---|
 | `media_channels` | 通道清单、能力、就绪状态、ComfyUI 在线状态 |
 | `media_generate_image` | 1–10 张、最多 5 张参考图、通道/模型/尺寸/比例/质量 |
 | `media_generate_video` | 文生/图生/首尾帧/多参考，按参考图数推断模式 |
+| `media_canvas_edit` | 画布编辑：局部重绘（指定位置改图/改元素）与定向扩图 |
 | `media_comfy_workflows` | 列/查看本机工作流：变量、图片槽位、输出 |
 | `media_comfy_run` | 传 vars + 图片跑工作流，异步或等待 |
 | `media_job` | 查/等/取消任务，读每镜状态；`collect` 可对超时的 ComfyUI 任务重新取回产物 |
@@ -72,9 +73,10 @@
 
 工具返回始终包含本地 `path` 与预览 `url`；宿主有 attachment 服务时再附内联图片（失败则静默降级，不影响路径可用）。
 
-### 1.5 统一面板（4 页签）
+### 1.5 统一面板（5 页签）
 
 - **创作**：图像 / 视频 / 分镜 / ComfyUI 四种模式一个表单；参考图可拖入、从素材库选；右侧结果区直接「作参考」再改。
+- **画布**：选一张底图后**框选区域做局部重绘**（指定位置改图、改元素），或**向某个方向扩图**。浏览器用 HTML5 canvas 把要重绘的区域/扩出的空白涂成白色软遮罩，交给图像通道补全，其余部分保持不变——无需各家支持原生 mask。结果可「设为底图」继续迭代。
 - **ComfyUI 工作流**：支持**上传 `.json` 文件**（按钮或拖入窗口）或直接粘贴 API 格式 JSON；UI 格式会当场提示重新导出。已配置的 ComfyUI 也会出现在图像/视频的通道下拉里，选中即切到工作流模式。没有 KSampler 的视频工作流（如 MiniMax H3 / WAN）也能从 conditioning 的 `prompt` 或标题为 Prompt/Text 的字符串节点识别出提示词；H3 的 `length` 会按 24fps 的 `5 + 17k` 规则在「秒」与「帧」之间转换，seed 与尺寸也会暴露；模板自带图片的槽位是可选的。
 - **任务**：全部异步任务、状态、进度、取消、产物。
 - **素材库**：搜索 / 图片视频筛选 / 收藏 / 详情 / 下载 / 多选视频拼接 / 登记本机文件。
@@ -92,7 +94,7 @@ dsh plugin --profile desktop add link:D:/path/to/dsh-media-studio
 dsh plugin --profile desktop add github:wustar1109/dsh-media-studio
 
 # 或从 Release 资产装入（带 SHA256SUMS）
-dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.2.4/dsh-media-studio-0.2.4.tgz
+dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.3.0/dsh-media-studio-0.3.0.tgz
 ```
 
 装完重启 DSH，左侧栏出现「媒体工作台」图标；主界面也会多一个同名面板。若宿主版本较老，入口在「设置 → 插件 → 已安装」。

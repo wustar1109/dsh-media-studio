@@ -6,15 +6,17 @@ import type { AssetView, ConfigView, JobView, StatsView } from './types.js'
 import { Icon, type IconName } from './icons.js'
 import { bytes, Spinner } from './ui.js'
 import { CreateTab } from './tabs/CreateTab.js'
+import { CanvasTab } from './tabs/CanvasTab.js'
 import { JobsTab } from './tabs/JobsTab.js'
 import { LibraryTab } from './tabs/LibraryTab.js'
 import { ChannelsTab } from './tabs/ChannelsTab.js'
 import CSS from './styles.css'
 
-type TabId = 'create' | 'jobs' | 'library' | 'channels'
+type TabId = 'create' | 'canvas' | 'jobs' | 'library' | 'channels'
 
 const TABS: Array<{ id: TabId; label: string; icon: IconName }> = [
   { id: 'create', label: '创作', icon: 'sparkles' },
+  { id: 'canvas', label: '画布', icon: 'paint' },
   { id: 'jobs', label: '任务', icon: 'clock' },
   { id: 'library', label: '素材库', icon: 'grid' },
   { id: 'channels', label: '通道', icon: 'plug' },
@@ -163,6 +165,13 @@ export function Studio({ visible }: StudioProps): React.ReactElement {
               notify={notify}
               onProduced={() => { void refreshJobs(); void refreshStats(); setLibraryVersion(value => value + 1) }}
               onOpenJobs={() => setTab('jobs')}
+            />
+          ) : null}
+          {tab === 'canvas' && config !== null ? (
+            <CanvasTab
+              channels={config.channels}
+              notify={notify}
+              onProduced={() => { void refreshJobs(); void refreshStats(); setLibraryVersion(value => value + 1) }}
             />
           ) : null}
           {tab === 'jobs' ? (

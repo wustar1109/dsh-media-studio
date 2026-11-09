@@ -76,6 +76,7 @@ export const api = {
 
   generateImage: (body: Record<string, unknown>) => call<{ job: JobView }>('/generate/image', { method: 'POST', body: JSON.stringify(body) }),
   generateVideo: (body: Record<string, unknown>) => call<{ job: JobView }>('/generate/video', { method: 'POST', body: JSON.stringify(body) }),
+  canvasEdit: (body: Record<string, unknown>) => call<{ job: JobView }>('/canvas/edit', { method: 'POST', body: JSON.stringify(body) }),
   storyboard: (body: Record<string, unknown>) => call<{ job: JobView }>('/storyboard', { method: 'POST', body: JSON.stringify(body) }),
   concat: (body: Record<string, unknown>) => call<{ job: JobView }>('/concat', { method: 'POST', body: JSON.stringify(body) }),
 

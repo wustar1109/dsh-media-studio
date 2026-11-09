@@ -202,6 +202,74 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
     },
   }
 
+  const canvasTool: ToolSpec = {
+    name: 'media_canvas_edit',
+    description:
+      '画布编辑：局部重绘（inpaint）或定向扩图（outpaint）。对一张已有图片做“指定位置改图 / 改元素 / 扩图”，用白遮罩标记要重绘的区域或扩出的空白，交给图像通道补全，其余部分保持不变。'
+      + '两种用法：① 浏览器画布里框选/扩图后自动传 composite（data URL）；② 直接传 source（素材库 id 或路径）+ region（0–1 归一化坐标）/ expand（方向+比例），宿主用本机 ffmpeg 合成白遮罩。'
+      + '需要本机 ffmpeg（仅 ② 路径）；输出写进素材库并返回路径与预览。',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['prompt', 'mode'],
+      properties: {
+        prompt: { type: 'string', description: '重绘区/扩展区要画什么；例如“把猫换成一只戴围巾的狗”“一条向右延伸的柏油路与天空”' },
+        mode: { type: 'string', enum: ['inpaint', 'outpaint'], description: 'inpaint=局部重绘/改元素；outpaint=定向扩图' },
+        source: { type: 'string', description: '原图：素材库 id、绝对路径或工作区相对路径（未传 composite 时必填）' },
+        composite: { type: 'string', description: '浏览器画布合成好的 PNG data URL（已带白遮罩）；传了就不用 source' },
+        region: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' },
+          },
+          description: 'inpaint：要重绘区域的归一化坐标（0–1），x/y 是左上角，w/h 是宽高',
+        },
+        expand: {
+          type: 'object',
+          additionalProperties: false,
+          properties: {
+            direction: { type: 'string', enum: ['left', 'right', 'top', 'bottom', 'all'] },
+            amount: { type: 'number', description: '扩展比例 0–1，如 0.5 = 向该方向扩出 50%' },
+          },
+          description: 'outpaint：扩展方向与比例',
+        },
+        channel: { type: 'string', description: '通道 id；省略用默认图像通道' },
+        model: { type: 'string', description: '模型 id；省略用通道默认模型' },
+        size: { type: 'string', description: '输出像素尺寸；省略按合成图宽高比自动取' },
+        aspect_ratio: { type: 'string', enum: ['1:1', '3:2', '2:3', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9'] },
+        wait: { type: 'boolean', description: 'true = 阻塞到出图（默认 false）' },
+      },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      const job = await studio.startCanvasEdit({
+        prompt: asString(args.prompt),
+        mode: asString(args.mode, 'inpaint') === 'outpaint' ? 'outpaint' : 'inpaint',
+        source: asString(args.source) || undefined,
+        composite: asString(args.composite) || undefined,
+        region: typeof args.region === 'object' && args.region !== null
+          ? (() => {
+              const r = args.region as Record<string, unknown>
+              return { x: Number(r.x), y: Number(r.y), w: Number(r.w), h: Number(r.h) }
+            })()
+          : undefined,
+        expand: typeof args.expand === 'object' && args.expand !== null
+          ? (() => {
+              const e = args.expand as Record<string, unknown>
+              return { direction: (asString(e.direction, 'right')) as 'left' | 'right' | 'top' | 'bottom' | 'all', amount: Number(e.amount) }
+            })()
+          : undefined,
+        channel: asString(args.channel) || undefined,
+        model: asString(args.model) || undefined,
+        size: asString(args.size) || undefined,
+        aspectRatio: asString(args.aspect_ratio) || undefined,
+        n: 1,
+      })
+      return waitFor(job, args.wait === true, 5 * 60_000)
+    },
+  }
+
   const videoTool: ToolSpec = {
     name: 'media_generate_video',
     description:
@@ -534,7 +602,7 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
     },
   }
 
-  return [channelsTool, imageTool, videoTool, comfyListTool, comfyRunTool, jobTool, libraryTool, storyboardTool, concatTool]
+  return [channelsTool, imageTool, canvasTool, videoTool, comfyListTool, comfyRunTool, jobTool, libraryTool, storyboardTool, concatTool]
 }
 
 /** Recursively drop `undefined` and turn non-finite numbers into null. */

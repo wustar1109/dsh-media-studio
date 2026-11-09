@@ -10,7 +10,7 @@ import { AssetLibrary } from './library.js'
 import { JobManager, type JobContext } from './jobs.js'
 import { ComfyClient, applyVars, assertApiWorkflow, historyFiles, historyState, inferSurface, listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow, type ApiWorkflow, type WorkflowSurface } from './comfy.js'
 import { capabilitiesOf, findChannel, importRootsOf, isReady, loadStoredConfig, mergeConfig, resolveChannel, resolveModel, resolveOutputDir, saveStoredConfig, workspaceDirOf, apiKeyOf, assertImportable, configFile, normalizeBaseUrl } from './config.js'
-import { concatVideos, detectFfmpeg, extractLastFrame } from './ffmpeg.js'
+import { compositeInpaint, compositeOutpaint, concatVideos, detectFfmpeg, extractLastFrame, nearestAspect, type CanvasExpand, type CanvasRegion } from './ffmpeg.js'
 import { generateOpenAIImage, generateOpenAIVideo } from './providers/openai.js'
 import { generateGoogleImage, generateGoogleVideo } from './providers/google.js'
 import { generateDashScopeImage, generateDashScopeVideo } from './providers/dashscope.js'
@@ -67,6 +67,26 @@ export interface StoryboardArgs {
   aspectRatio?: string
   chain?: boolean
   concat?: boolean
+  wait?: boolean
+}
+
+export interface CanvasArgs {
+  /** What to draw in the redrawn region / the newly expanded area. */
+  prompt: string
+  mode: 'inpaint' | 'outpaint'
+  /** Original image (asset id, absolute path, or workspace path). */
+  source?: string
+  /** Browser-composited PNG data URL; skips server-side compositing when given. */
+  composite?: string
+  /** 0–1 normalised region to redraw (inpaint). */
+  region?: CanvasRegion
+  /** Outpaint direction + amount (0–1 ratio). */
+  expand?: CanvasExpand
+  channel?: string
+  model?: string
+  size?: string
+  aspectRatio?: string
+  n?: number
   wait?: boolean
 }
 
@@ -389,6 +409,66 @@ export class StudioService {
       if (adapter === undefined) throw new Error(`通道 ${channel.label} 不支持图像生成`)
       const images = await adapter(request)
       return { assets: this.saveImages(images, { prompt, channel, model, jobId: context.job.id, refs: refs.map(ref => ref.path), params: { n, aspectRatio: args.aspectRatio, size: args.size } }) }
+    })
+  }
+
+  /**
+   * Canvas editing: local redraw (inpaint) or directional expansion (outpaint).
+   *
+   * The source is turned into a composite "soft mask" — the region to redraw is
+   * blanked white, or the canvas is padded white in the expansion direction —
+   * then fed to the image channel as a reference so it fills that area while
+   * keeping the rest. This works across Seedream / OpenAI / Gemini / relays that
+   * only do reference-based editing and have no native mask API.
+   */
+  async startCanvasEdit(args: CanvasArgs): Promise<JobRecord> {
+    const prompt = args.prompt.trim()
+    if (prompt === '') throw new Error('prompt 不能为空')
+    const mode = args.mode === 'outpaint' ? 'outpaint' : 'inpaint'
+
+    // 1. Build (or import) the composite reference image and learn its size.
+    let compositeAsset: AssetRecord
+    let dims: { width: number; height: number } | undefined
+    if (args.composite !== undefined && args.composite.trim() !== '') {
+      compositeAsset = this.importBase64(args.composite.trim(), `canvas-${mode}`)
+      dims = compositeAsset.width === undefined || compositeAsset.height === undefined
+        ? undefined
+        : { width: compositeAsset.width, height: compositeAsset.height }
+    } else {
+      if (args.source === undefined || args.source.trim() === '') throw new Error('需要 source（原图 id/路径）或 composite（浏览器合成的图）')
+      const source = this.resolveRef(args.source)
+      const tmpDir = path.join(dataDir(), 'tmp')
+      ensureDir(tmpDir)
+      const tmp = path.join(tmpDir, `canvas-${makeId('cv')}.png`)
+      try {
+        if (mode === 'inpaint') {
+          if (args.region === undefined) throw new Error('inpaint 需要 region（0–1 归一化坐标 x/y/w/h）')
+          dims = await compositeInpaint(source.path, tmp, args.region, this.config.ffmpegPath)
+        } else {
+          if (args.expand === undefined) throw new Error('outpaint 需要 expand { direction, amount }')
+          dims = await compositeOutpaint(source.path, tmp, args.expand, this.config.ffmpegPath)
+        }
+        compositeAsset = this.library.addBuffer(fs.readFileSync(tmp), { kind: 'image', name: `canvas-${mode}`, meta: { origin: 'imported' } })
+      } finally {
+        fs.rm(tmp, { force: true }, () => {})
+      }
+    }
+
+    // 2. Compose an instruction prompt and derive the target aspect ratio.
+    const instruction = composeCanvasPrompt(mode, prompt, args.region, args.expand)
+    const aspectRatio = args.aspectRatio !== undefined && args.aspectRatio !== ''
+      ? args.aspectRatio
+      : dims === undefined ? undefined : nearestAspect(dims.width, dims.height)
+
+    // 3. Reuse the image pipeline with the composite as the single reference.
+    return this.startImage({
+      prompt: instruction,
+      refs: [compositeAsset.id],
+      channel: args.channel,
+      model: args.model,
+      size: args.size,
+      aspectRatio,
+      n: args.n ?? 1,
     })
   }
 
@@ -871,6 +951,20 @@ function extForMime(mime: string): string {
 
 const IMAGE_MODEL_RE = /(image|dall-e|seedream|flux|sdxl|stable-diffusion|qwen-image|imagen|banana|kolors|glm-image|midjourney)/i
 const VIDEO_MODEL_RE = /(sora|veo|wan2|wanx|seedance|kling|hailuo|video|imagine-video)/i
+
+const DIRECTION_LABEL: Record<string, string> = { left: '向左', right: '向右', top: '向上', bottom: '向下', all: '向四周' }
+
+function composeCanvasPrompt(mode: 'inpaint' | 'outpaint', userPrompt: string, region?: CanvasRegion, expand?: CanvasExpand): string {
+  if (mode === 'inpaint') {
+    const where = region === undefined
+      ? '图中白色遮罩标记的区域'
+      : `图中白色遮罩标记的区域（左上角约 (${Math.round(region.x * 100)}%, ${Math.round(region.y * 100)}%)，宽约 ${Math.round(region.w * 100)}%、高约 ${Math.round(region.h * 100)}%）`
+    return `对原图做局部重绘。${where}需要被重新绘制。重绘内容：${userPrompt}。白色遮罩之外的部分保持原样不变，重绘区与周围自然过渡，光影、透视和整体风格与原图一致。`
+  }
+  const direction = expand === undefined ? '指定' : DIRECTION_LABEL[expand.direction] ?? '指定'
+  const howMuch = expand === undefined ? '' : `（约扩展 ${String(Math.round(expand.amount * 100))}%）`
+  return `对原图做扩图。画面${direction}方向扩展${howMuch}。新增的白色空白区域内容：${userPrompt}。原图部分保持原样不变，新旧区域交界处自然衔接，透视、光影和整体风格与原图一致。`
+}
 
 function classifyModels(models: string[], kind: 'image' | 'video'): string[] {
   return models.filter(model => kind === 'video' ? VIDEO_MODEL_RE.test(model) && !/image/i.test(model) : IMAGE_MODEL_RE.test(model))

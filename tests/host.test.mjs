@@ -21,6 +21,7 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
   'base64',
 )
+const PNG_DATA_URL = `data:image/png;base64,${PNG.toString('base64')}`
 const MP4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(64, 1)])
 
 let imageCalls = 0
@@ -36,6 +37,12 @@ const server = http.createServer((req, res) => {
     imageCalls += 1
     res.writeHead(200, { 'content-type': 'application/json' })
     res.end(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }, { b64_json: PNG.toString('base64') }] }))
+    return
+  }
+  if (req.method === 'POST' && url.pathname === '/v1/images/edits') {
+    imageCalls += 1
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ data: [{ b64_json: PNG.toString('base64') }] }))
     return
   }
   if (req.method === 'POST' && url.pathname === '/v1/videos') {
@@ -195,6 +202,32 @@ studio.updateConfig({
   const settled = await studio.jobs.wait(submitted.job.jobId, 10_000)
   assert.equal(settled.state, 'succeeded')
 
+  // Canvas edit via a browser-composited data URL (no ffmpeg needed).
+  const canvasEdit = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'inpaint',
+      prompt: '换成一条河',
+      composite: PNG_DATA_URL,
+      region: { x: 0.2, y: 0.2, w: 0.3, h: 0.3 },
+    }),
+  }).then(response => response.json())
+  assert.equal(canvasEdit.ok, true, canvasEdit.message)
+  const canvasSettled = await studio.jobs.wait(canvasEdit.job.jobId, 10_000)
+  assert.equal(canvasSettled.state, 'succeeded')
+  assert.ok(canvasSettled.assets.length >= 1)
+  assert.match(String(canvasSettled.prompt), /局部重绘/)
+
+  // Composite path without a composite data URL but also without ffmpeg should
+  // fail loudly rather than silently producing a broken reference.
+  const noFfmpeg = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: 'outpaint', prompt: '天空', source: library.items[0].id, expand: { direction: 'right', amount: 0.5 } }),
+  }).then(response => response.json())
+  assert.equal(noFfmpeg.ok, false)
+
   const missing = await fetch(`${apiBase}/media-studio/api/nope`).then(response => response.json())
   assert.equal(missing.ok, false)
   await new Promise(resolve => api.close(resolve))
@@ -224,3 +257,13 @@ studio.updateConfig({
 server.close()
 fs.rmSync(root, { recursive: true, force: true })
 console.log('[test] host smoke tests passed')
+
+// ── nearestAspect (pure) ────────────────────────────────────────────────────
+{
+  const { nearestAspect } = await import('../lib/index.js')
+  assert.equal(nearestAspect(1024, 1024), '1:1')
+  assert.equal(nearestAspect(2560, 1440), '16:9')
+  assert.equal(nearestAspect(1440, 2560), '9:16')
+  assert.equal(nearestAspect(1024, 1536), '2:3')
+  console.log('[test] nearestAspect ok')
+}

@@ -221,6 +221,40 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
     },
     {
       method: 'POST',
+      pattern: /^\/canvas\/edit$/,
+      handler: async ({ body }) => {
+        const region = body.region !== null && typeof body.region === 'object'
+          ? {
+              x: Number((body.region as Record<string, unknown>).x),
+              y: Number((body.region as Record<string, unknown>).y),
+              w: Number((body.region as Record<string, unknown>).w),
+              h: Number((body.region as Record<string, unknown>).h),
+            }
+          : undefined
+        const expand = body.expand !== null && typeof body.expand === 'object'
+          ? {
+              direction: String((body.expand as Record<string, unknown>).direction ?? 'right') as 'left' | 'right' | 'top' | 'bottom' | 'all',
+              amount: Number((body.expand as Record<string, unknown>).amount),
+            }
+          : undefined
+        const job = await studio.startCanvasEdit({
+          prompt: String(body.prompt ?? ''),
+          mode: body.mode === 'outpaint' ? 'outpaint' : 'inpaint',
+          source: optional(body.source),
+          composite: optional(body.composite),
+          region,
+          expand,
+          channel: optional(body.channel),
+          model: optional(body.model),
+          size: optional(body.size),
+          aspectRatio: optional(body.aspectRatio),
+          n: typeof body.n === 'number' ? body.n : undefined,
+        })
+        return { ok: true, job: jobView(job) }
+      },
+    },
+    {
+      method: 'POST',
       pattern: /^\/storyboard$/,
       handler: async ({ body }) => {
         const shots = Array.isArray(body.shots)

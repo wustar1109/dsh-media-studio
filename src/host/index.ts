@@ -88,5 +88,5 @@ export { inferSurface, applyVars, assertApiWorkflow, listWorkflows, saveWorkflow
 export { mergeConfig, emptyConfig, resolveChannel } from './config.js'
 export { AssetLibrary } from './library.js'
 export { JobManager } from './jobs.js'
-export { concatVideos, detectFfmpeg } from './ffmpeg.js'
+export { concatVideos, detectFfmpeg, nearestAspect, compositeInpaint, compositeOutpaint } from './ffmpeg.js'
 export { buildTools, jobView, assetView, sanitizeToolValue } from './tools.js'

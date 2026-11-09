@@ -186,3 +186,86 @@ export async function extractLastFrame(input: string, outputDir: string, ffmpegP
 export async function durationOf(file: string, ffmpegPath?: string | null): Promise<number | undefined> {
   return (await probe(file, ffmpegPath)).duration
 }
+
+/** Nearest of the discrete aspect-ratio labels the image providers accept. */
+export function nearestAspect(width: number, height: number): string {
+  if (width <= 0 || height <= 0) return '1:1'
+  const target = width / height
+  const options: Array<[string, number]> = [
+    ['1:1', 1], ['4:3', 4 / 3], ['3:4', 3 / 4], ['16:9', 16 / 9], ['9:16', 9 / 16],
+    ['3:2', 3 / 2], ['2:3', 2 / 3], ['21:9', 21 / 9],
+  ]
+  let best = options[0]![1]
+  let label = options[0]![0]
+  for (const [candidateLabel, ratio] of options) {
+    const diff = Math.abs(Math.log(ratio / target))
+    if (diff < Math.abs(Math.log(best / target))) {
+      best = ratio
+      label = candidateLabel
+    }
+  }
+  return label
+}
+
+/** A region to redraw, in 0–1 normalised coordinates of the source image. */
+export interface CanvasRegion { x: number; y: number; w: number; h: number }
+/** An outpaint expansion: `amount` is a 0–1 ratio of the affected dimension(s). */
+export interface CanvasExpand { direction: 'left' | 'right' | 'top' | 'bottom' | 'all'; amount: number }
+
+const MASK_COLOR = '0xffffff'
+
+/**
+ * Blank a rectangular region with white so a reference-edit model treats it as
+ * "to be redrawn". Works without a real mask API (Seedream, most relays).
+ */
+export async function compositeInpaint(
+  input: string,
+  output: string,
+  region: CanvasRegion,
+  ffmpegPath?: string | null,
+): Promise<{ width: number; height: number }> {
+  const info = detectFfmpeg(ffmpegPath)
+  if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
+  const dims = await probe(input, ffmpegPath)
+  if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
+  const { width, height } = dims
+  const x = clampInt(region.x * width, 0, width - 1)
+  const y = clampInt(region.y * height, 0, height - 1)
+  const bw = clampInt(region.w * width, 1, width - x)
+  const bh = clampInt(region.h * height, 1, height - y)
+  await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', input,
+    '-vf', `drawbox=x=${x}:y=${y}:w=${bw}:h=${bh}:color=${MASK_COLOR}@1:t=fill`, output],
+  { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
+  return { width, height }
+}
+
+/** Pad the image into a larger canvas, keeping the source in place. */
+export async function compositeOutpaint(
+  input: string,
+  output: string,
+  expand: CanvasExpand,
+  ffmpegPath?: string | null,
+): Promise<{ width: number; height: number }> {
+  const info = detectFfmpeg(ffmpegPath)
+  if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
+  const dims = await probe(input, ffmpegPath)
+  if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
+  const { width, height } = dims
+  const amount = Math.max(0, Math.min(1, expand.amount))
+  const horizontal = expand.direction === 'left' || expand.direction === 'right' || expand.direction === 'all'
+  const vertical = expand.direction === 'top' || expand.direction === 'bottom' || expand.direction === 'all'
+  const dx = horizontal ? Math.round(width * amount) : 0
+  const dy = vertical ? Math.round(height * amount) : 0
+  const nw = width + dx
+  const nh = height + dy
+  const ox = expand.direction === 'left' ? dx : expand.direction === 'all' ? Math.round(dx / 2) : 0
+  const oy = expand.direction === 'top' ? dy : expand.direction === 'all' ? Math.round(dy / 2) : 0
+  await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', input,
+    '-vf', `pad=${nw}:${nh}:${ox}:${oy}:color=${MASK_COLOR}`, output],
+  { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
+  return { width: nw, height: nh }
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, Math.round(value)))
+}
