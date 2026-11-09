@@ -120,8 +120,16 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
   const test = async (id: string): Promise<void> => {
     setTesting(id)
     try {
-      const result = await api.testChannel(id)
+      const draft = drafts[id]
+      // Probe the values currently typed, not the last saved config.
+      const result = await api.testChannel(id, {
+        ...(draft?.apiKey.trim() === undefined || draft?.apiKey.trim() === '' ? {} : { apiKey: draft.apiKey.trim() }),
+        ...(draft?.baseUrl.trim() === undefined || draft?.baseUrl.trim() === '' ? {} : { baseUrl: draft.baseUrl.trim() }),
+      })
       setTestResult(current => ({ ...current, [id]: { ok: result.ok, detail: `${result.detail}${result.latencyMs === undefined ? '' : ` · ${String(result.latencyMs)}ms`}` } }))
+      // A successful probe means the typed values work: persist them so the
+      // next generation does not fail on an unsaved key.
+      if (result.ok && draft !== undefined) await saveAll()
     } catch (error) {
       setTestResult(current => ({ ...current, [id]: { ok: false, detail: error instanceof Error ? error.message : String(error) } }))
     } finally {
@@ -227,6 +235,7 @@ export function ChannelsTab({ config, onSaved, notify }: ChannelsProps): React.R
                     <Button size="sm" variant="soft" icon={testing === channel.id ? undefined : 'plug'} disabled={testing === channel.id} onClick={() => { void test(channel.id) }}>
                       {testing === channel.id ? '测试中…' : '测试连接'}
                     </Button>
+                    <span className="ms-hint">测试使用当前输入，成功会自动保存</span>
                     <label className="ms-check">
                       <input type="checkbox" checked={draft.enabled} onChange={event => patchDraft(channel.id, { enabled: event.target.checked })} />
                       启用

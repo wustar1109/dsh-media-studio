@@ -9,7 +9,7 @@ import path from 'node:path'
 import { AssetLibrary } from './library.js'
 import { JobManager, type JobContext } from './jobs.js'
 import { ComfyClient, applyVars, assertApiWorkflow, historyFiles, historyState, inferSurface, listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow, type ApiWorkflow, type WorkflowSurface } from './comfy.js'
-import { capabilitiesOf, findChannel, importRootsOf, isReady, loadStoredConfig, mergeConfig, resolveChannel, resolveModel, resolveOutputDir, saveStoredConfig, workspaceDirOf, apiKeyOf, assertImportable, configFile } from './config.js'
+import { capabilitiesOf, findChannel, importRootsOf, isReady, loadStoredConfig, mergeConfig, resolveChannel, resolveModel, resolveOutputDir, saveStoredConfig, workspaceDirOf, apiKeyOf, assertImportable, configFile, normalizeBaseUrl } from './config.js'
 import { concatVideos, detectFfmpeg, extractLastFrame } from './ffmpeg.js'
 import { generateOpenAIImage, generateOpenAIVideo } from './providers/openai.js'
 import { generateGoogleImage, generateGoogleVideo } from './providers/google.js'
@@ -190,22 +190,35 @@ export class StudioService {
     return { client: new ComfyClient(base, channel.headers, this.logger) }
   }
 
-  /** Live probe for the panel and the `test` route. */
-  async testChannel(id: string): Promise<{ ok: boolean; detail: string; latencyMs?: number }> {
+  /**
+   * Live probe for the panel and the `test` route.
+   *
+   * `overrides` carries the values currently typed in the panel, so "测试连接"
+   * works before the user presses 保存 (the saved config may still be empty).
+   */
+  async testChannel(id: string, overrides: { apiKey?: string; baseUrl?: string } = {}): Promise<{ ok: boolean; detail: string; latencyMs?: number }> {
     const started = Date.now()
     const channel = this.channelById(id)
     if (channel === undefined) return { ok: false, detail: `没有通道 ${id}` }
+    const typedKey = overrides.apiKey?.trim() ?? ''
+    const typedBase = overrides.baseUrl?.trim() ?? ''
     if (channel.kind === 'comfyui') {
-      const built = this.comfyClient()
-      if (built.client === undefined) return { ok: false, detail: built.error ?? 'ComfyUI 未配置' }
-      const stats = await built.client.systemStats()
+      const base = typedBase !== '' ? normalizeBaseUrl(typedBase) : (channel.baseUrl?.trim() ?? '')
+      if (base === '') return { ok: false, detail: '还没有填写 ComfyUI 地址（面板 → 通道 → ComfyUI）' }
+      const client = new ComfyClient(base, channel.headers, this.logger)
+      const stats = await client.systemStats()
       return stats.ok
         ? { ok: true, detail: `ComfyUI 在线${systemSummary(stats.system)}`, latencyMs: Date.now() - started }
         : { ok: false, detail: stats.error ?? '连不上' }
     }
-    const key = apiKeyOf(channel)
+    const probeChannel = {
+      ...channel,
+      ...(typedKey === '' ? {} : { apiKey: typedKey }),
+      ...(typedBase === '' ? {} : { baseUrl: normalizeBaseUrl(typedBase) }),
+    }
+    const key = apiKeyOf(probeChannel)
     if (key === '') return { ok: false, detail: `还没有 API Key（${channel.apiKeyEnv ?? '面板里填写'}）` }
-    const base = (channel.baseUrl ?? '').replace(/\/+$/, '')
+    const base = (probeChannel.baseUrl ?? '').replace(/\/+$/, '')
     if (base === '') return { ok: false, detail: '缺少 baseUrl' }
     const url = channel.kind === 'google'
       ? `${base}/models?key=${encodeURIComponent(key)}`

@@ -29,11 +29,11 @@ export const api = {
    * HTTP error — do not route it through `call()`, or the panel shows
    * "请求失败：HTTP 200" instead of why the connection failed.
    */
-  testChannel: async (id: string): Promise<{ ok: boolean; detail: string; latencyMs?: number }> => {
+  testChannel: async (id: string, overrides: { apiKey?: string; baseUrl?: string } = {}): Promise<{ ok: boolean; detail: string; latencyMs?: number }> => {
     const response = await fetch(`${BASE}/channels/test`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id }),
+      body: JSON.stringify({ id, ...overrides }),
     })
     let payload: unknown = null
     try {

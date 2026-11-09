@@ -133,7 +133,10 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
       pattern: /^\/channels\/test$/,
       handler: async ({ body }) => {
         const id = typeof body.id === 'string' ? body.id : ''
-        const result = await studio.testChannel(id)
+        const result = await studio.testChannel(id, {
+          ...(typeof body.apiKey === 'string' ? { apiKey: body.apiKey } : {}),
+          ...(typeof body.baseUrl === 'string' ? { baseUrl: body.baseUrl } : {}),
+        })
         return { ok: result.ok, detail: result.detail, message: result.detail, latencyMs: result.latencyMs }
       },
     },

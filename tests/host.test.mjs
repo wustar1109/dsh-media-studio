@@ -150,6 +150,14 @@ studio.updateConfig({
   assert.equal(config.ok, true)
   assert.equal(config.config.channels.find(channel => channel.id === 'openai').apiKey, '••••••••')
 
+  // Probe with values typed in the panel (not yet saved).
+  const probe = await fetch(`${apiBase}/media-studio/api/channels/test`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ id: 'openai', apiKey: 'typed-key', baseUrl: base }),
+  }).then(response => response.json())
+  assert.equal(probe.ok, true, probe.detail)
+
   const library = await fetch(`${apiBase}/media-studio/api/library?limit=5`).then(response => response.json())
   assert.equal(library.ok, true)
   assert.ok(library.total >= 3)
