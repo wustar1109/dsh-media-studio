@@ -27,7 +27,9 @@ export async function generateArkImage(request: ImageRequest): Promise<Generated
     size,
     response_format: 'b64_json',
     watermark: false,
-    sequential_image_generation: 'disabled',
+    // Do NOT send `sequential_image_generation`: only some Seedream 4.0
+    // endpoints accept it, and Seedream 5.x rejects the field with
+    // InvalidParameter. Callers that need it can set it via extraBody.
     ...request.channel.extraBody,
   }
   const response = await postJson(joinUrl(base(request), 'images/generations'), body, bearer(request.apiKey, request.channel.headers), 300_000, request.signal)
