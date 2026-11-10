@@ -10,11 +10,11 @@ import { AssetLibrary } from './library.js'
 import { JobManager, type JobContext } from './jobs.js'
 import { ComfyClient, applyVars, assertApiWorkflow, historyFiles, historyState, inferSurface, listWorkflows, getWorkflow, saveWorkflow, deleteWorkflow, type ApiWorkflow, type WorkflowSurface } from './comfy.js'
 import { capabilitiesOf, findChannel, importRootsOf, isReady, loadStoredConfig, mergeConfig, resolveChannel, resolveModel, resolveOutputDir, saveStoredConfig, workspaceDirOf, apiKeyOf, assertImportable, configFile, normalizeBaseUrl } from './config.js'
-import { compositeInpaint, compositeOutpaint, concatVideos, detectFfmpeg, extractLastFrame, nearestAspect, type CanvasExpand, type CanvasRegion } from './ffmpeg.js'
+import { compositeInpaint, compositeMaskInpaint, compositeMaskOutpaint, compositeOutpaint, concatVideos, detectFfmpeg, extractLastFrame, nearestAspect, type CanvasExpand, type CanvasRegion } from './ffmpeg.js'
 import { generateOpenAIImage, generateOpenAIVideo } from './providers/openai.js'
 import { generateGoogleImage, generateGoogleVideo } from './providers/google.js'
 import { generateDashScopeImage, generateDashScopeVideo } from './providers/dashscope.js'
-import { generateArkImage, generateArkVideo } from './providers/ark.js'
+import { generateArkImage, generateArkVideo, editArkImage } from './providers/ark.js'
 import { generateXaiImage, generateXaiVideo } from './providers/xai.js'
 import type { AssetRecord, ChannelConfig, GeneratedImage, GeneratedVideo, HostContext, ImageRequest, JobRecord, Logger, StudioConfig, VideoRequest } from './types.js'
 import { canonical, dataDir, ensureDir, imageSize, makeId, mimeOf, sniffImageMime } from './util.js'
@@ -78,6 +78,10 @@ export interface CanvasArgs {
   source?: string
   /** Browser-composited PNG data URL; skips server-side compositing when given. */
   composite?: string
+  /** Native-mask input image (source for inpaint, padded source for outpaint). */
+  image?: string
+  /** Native-mask mask data URL (white = regenerate, black = keep). */
+  mask?: string
   /** 0–1 normalised region to redraw (inpaint). */
   region?: CanvasRegion
   /** Outpaint direction + amount (0–1 ratio). */
@@ -415,18 +419,87 @@ export class StudioService {
   /**
    * Canvas editing: local redraw (inpaint) or directional expansion (outpaint).
    *
-   * The source is turned into a composite "soft mask" — the region to redraw is
-   * blanked white, or the canvas is padded white in the expansion direction —
-   * then fed to the image channel as a reference so it fills that area while
-   * keeping the rest. This works across Seedream / OpenAI / Gemini / relays that
-   * only do reference-based editing and have no native mask API.
+   * Two backends:
+   *  - Ark/Seedream uses the native masked-edit endpoint (`image` + `mask`,
+   *    white = regenerate) for pixel-accurate results.
+   *  - Every other channel uses the "soft mask" reference-edit fallback: the
+   *    region to redraw is blanked white (or the canvas padded white) and fed as
+   *    a reference so the model fills that area while keeping the rest.
    */
   async startCanvasEdit(args: CanvasArgs): Promise<JobRecord> {
     const prompt = args.prompt.trim()
     if (prompt === '') throw new Error('prompt 不能为空')
     const mode = args.mode === 'outpaint' ? 'outpaint' : 'inpaint'
+    const channel = this.requireChannel('image', args.channel)
+    if (channel.kind === 'comfyui') throw new Error('ComfyUI 通道不支持画布编辑（请用 media_comfy_run 跑 inpaint 工作流）')
+    const model = resolveModel(channel, 'image', args.model)
+    const key = apiKeyOf(channel)
+    if (key === '') throw new Error(`通道 ${channel.label} 缺少 API Key`)
 
-    // 1. Build (or import) the composite reference image and learn its size.
+    const instruction = composeCanvasPrompt(mode, prompt, args.region, args.expand)
+
+    // ── Ark native masked edit ──────────────────────────────────────────────
+    if (channel.kind === 'ark') {
+      let image: { data: Buffer; mime: string }
+      let mask: { data: Buffer; mime: string }
+      let size: string
+      if (args.image !== undefined && args.image.trim() !== '' && args.mask !== undefined && args.mask.trim() !== '') {
+        image = decodeDataUrl(args.image.trim())
+        mask = decodeDataUrl(args.mask.trim())
+        size = args.size !== undefined && args.size !== '' ? args.size : `${String(dimOf(image).width)}x${String(dimOf(image).height)}`
+      } else if (args.source !== undefined && args.source.trim() !== '') {
+        const source = this.resolveRef(args.source)
+        const tmpDir = path.join(dataDir(), 'tmp')
+        ensureDir(tmpDir)
+        const imageTmp = path.join(tmpDir, `canvas-img-${makeId('cv')}.png`)
+        const maskTmp = path.join(tmpDir, `canvas-mask-${makeId('cv')}.png`)
+        let dims: { width: number; height: number }
+        try {
+          if (mode === 'inpaint') {
+            if (args.region === undefined) throw new Error('inpaint 需要 region（0–1 归一化坐标）')
+            fs.copyFileSync(source.path, imageTmp)
+            dims = await compositeMaskInpaint(source.path, maskTmp, args.region, this.config.ffmpegPath)
+          } else {
+            if (args.expand === undefined) throw new Error('outpaint 需要 expand { direction, amount }')
+            dims = await compositeOutpaint(source.path, imageTmp, args.expand, this.config.ffmpegPath)
+            await compositeMaskOutpaint(source.path, maskTmp, args.expand, this.config.ffmpegPath)
+          }
+          image = { data: fs.readFileSync(imageTmp), mime: 'image/png' }
+          mask = { data: fs.readFileSync(maskTmp), mime: 'image/png' }
+          size = `${String(dims.width)}x${String(dims.height)}`
+        } finally {
+          fs.rm(imageTmp, { force: true }, () => {})
+          fs.rm(maskTmp, { force: true }, () => {})
+        }
+      } else {
+        throw new Error('原生 mask 需要 source + image/mask，或 source + region/expand')
+      }
+
+      return this.jobs.start({
+        kind: 'image',
+        prompt,
+        channelId: channel.id,
+        provider: channel.kind,
+        model,
+        params: { mode, edit: 'native-mask' },
+      }, async context => {
+        context.progress('正在请求 Seedream 局部重绘…')
+        const images = await editArkImage({
+          channel: { ...channel, imageModel: model },
+          apiKey: key,
+          model,
+          prompt: instruction,
+          image,
+          mask,
+          size,
+          maxBytes: this.config.maxImageBytes,
+          signal: context.signal,
+        })
+        return { assets: this.saveImages(images, { prompt, channel, model, jobId: context.job.id, refs: args.source === undefined ? [] : [args.source], params: { mode, edit: 'native-mask' } }) }
+      })
+    }
+
+    // ── Soft-mask reference-edit fallback ───────────────────────────────────
     let compositeAsset: AssetRecord
     let dims: { width: number; height: number } | undefined
     if (args.composite !== undefined && args.composite.trim() !== '') {
@@ -454,13 +527,10 @@ export class StudioService {
       }
     }
 
-    // 2. Compose an instruction prompt and derive the target aspect ratio.
-    const instruction = composeCanvasPrompt(mode, prompt, args.region, args.expand)
     const aspectRatio = args.aspectRatio !== undefined && args.aspectRatio !== ''
       ? args.aspectRatio
       : dims === undefined ? undefined : nearestAspect(dims.width, dims.height)
 
-    // 3. Reuse the image pipeline with the composite as the single reference.
     return this.startImage({
       prompt: instruction,
       refs: [compositeAsset.id],
@@ -968,6 +1038,22 @@ function composeCanvasPrompt(mode: 'inpaint' | 'outpaint', userPrompt: string, r
 
 function classifyModels(models: string[], kind: 'image' | 'video'): string[] {
   return models.filter(model => kind === 'video' ? VIDEO_MODEL_RE.test(model) && !/image/i.test(model) : IMAGE_MODEL_RE.test(model))
+}
+
+/** Decode a data URL into raw bytes + mime, without touching the library. */
+function decodeDataUrl(data: string): { data: Buffer; mime: string } {
+  const match = /^data:([^;]+);base64,(.*)$/s.exec(data)
+  const mime = match?.[1] ?? 'image/png'
+  const buffer = Buffer.from((match?.[2] ?? data).replace(/\s+/g, ''), 'base64')
+  if (buffer.length === 0) throw new Error('空的图片数据')
+  return { data: buffer, mime }
+}
+
+/** Pixel dimensions of an in-memory image. */
+function dimOf(image: { data: Buffer }): { width: number; height: number } {
+  const dims = imageSize(image.data)
+  if (dims === undefined) throw new Error('无法读取图片尺寸')
+  return dims
 }
 
 function systemSummary(system: Record<string, unknown> | undefined): string {

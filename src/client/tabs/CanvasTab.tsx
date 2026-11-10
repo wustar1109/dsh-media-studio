@@ -154,24 +154,63 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
   }
   const onMouseUp = (): void => { dragRef.current = null }
 
-  const buildComposite = useCallback((): string => {
-    const image = imgRef.current
-    if (image === null || natural === null) throw new Error('还没有底图')
+  // Cap the long side so the native-mask payload stays small and Ark accepts the size.
+  const buildPayload = useCallback((): { image: string; mask: string; composite: string } => {
+    const src = imgRef.current
+    if (src === null || natural === null) throw new Error('还没有底图')
     const { w: cw, h: ch } = compositeDim()
+    const scale = Math.min(1, 2048 / Math.max(cw, ch))
+    const W = Math.max(1, Math.round(cw * scale))
+    const H = Math.max(1, Math.round(ch * scale))
     const off = sourceOffset()
-    const canvas = document.createElement('canvas')
-    canvas.width = cw
-    canvas.height = ch
-    const ctx = canvas.getContext('2d')
-    if (ctx === null) throw new Error('无法创建画布')
-    ctx.fillStyle = '#ffffff'
-    ctx.fillRect(0, 0, cw, ch)
-    ctx.drawImage(image, off.x, off.y, natural.w, natural.h)
-    if (mode === 'inpaint' && region !== null && region.w > 0.004 && region.h > 0.004) {
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(region.x * natural.w, region.y * natural.h, region.w * natural.w, region.h * natural.h)
+    const ox = Math.round(off.x * scale)
+    const oy = Math.round(off.y * scale)
+    const sw = Math.max(1, Math.round(natural.w * scale))
+    const sh = Math.max(1, Math.round(natural.h * scale))
+    const make = (): [HTMLCanvasElement, CanvasRenderingContext2D] => {
+      const canvas = document.createElement('canvas')
+      canvas.width = W
+      canvas.height = H
+      const ctx = canvas.getContext('2d')
+      if (ctx === null) throw new Error('无法创建画布')
+      return [canvas, ctx]
     }
-    return canvas.toDataURL('image/png')
+
+    // image: source (inpaint) or padded source (outpaint)
+    const [imageCanvas, imageCtx] = make()
+    imageCtx.fillStyle = '#ffffff'
+    imageCtx.fillRect(0, 0, W, H)
+    imageCtx.drawImage(src, ox, oy, sw, sh)
+    const image = imageCanvas.toDataURL('image/png')
+
+    // mask: black keep + white regenerate
+    const [maskCanvas, maskCtx] = make()
+    if (mode === 'inpaint' && region !== null && region.w > 0.004 && region.h > 0.004) {
+      maskCtx.fillStyle = '#000000'
+      maskCtx.fillRect(0, 0, W, H)
+      maskCtx.fillStyle = '#ffffff'
+      maskCtx.fillRect(region.x * W, region.y * H, region.w * W, region.h * H)
+    } else {
+      // outpaint: white everywhere, black over the kept source rect
+      maskCtx.fillStyle = '#ffffff'
+      maskCtx.fillRect(0, 0, W, H)
+      maskCtx.fillStyle = '#000000'
+      maskCtx.fillRect(ox, oy, sw, sh)
+    }
+    const mask = maskCanvas.toDataURL('image/png')
+
+    // composite: soft-mask fallback (white baked into the region / padding)
+    const [compositeCanvas, compositeCtx] = make()
+    compositeCtx.fillStyle = '#ffffff'
+    compositeCtx.fillRect(0, 0, W, H)
+    compositeCtx.drawImage(src, ox, oy, sw, sh)
+    if (mode === 'inpaint' && region !== null && region.w > 0.004 && region.h > 0.004) {
+      compositeCtx.fillStyle = '#ffffff'
+      compositeCtx.fillRect(region.x * W, region.y * H, region.w * W, region.h * H)
+    }
+    const composite = compositeCanvas.toDataURL('image/png')
+
+    return { image, mask, composite }
   }, [natural, mode, region, compositeDim, sourceOffset])
 
   const run = async (): Promise<void> => {
@@ -181,10 +220,12 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     setRunning(true)
     setResult(null)
     try {
-      const composite = buildComposite()
+      const { image, mask, composite } = buildPayload()
       const { job } = await api.canvasEdit({
         mode,
         prompt: prompt.trim(),
+        image,
+        mask,
         composite,
         ...(mode === 'inpaint' ? { region } : { expand: { direction, amount } }),
         ...(channelId === '' ? {} : { channel: channelId }),

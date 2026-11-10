@@ -242,6 +242,8 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
           mode: body.mode === 'outpaint' ? 'outpaint' : 'inpaint',
           source: optional(body.source),
           composite: optional(body.composite),
+          image: optional(body.image),
+          mask: optional(body.mask),
           region,
           expand,
           channel: optional(body.channel),

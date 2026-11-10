@@ -213,6 +213,15 @@ export interface CanvasRegion { x: number; y: number; w: number; h: number }
 export interface CanvasExpand { direction: 'left' | 'right' | 'top' | 'bottom' | 'all'; amount: number }
 
 const MASK_COLOR = '0xffffff'
+/** Native mask edits cap the long side so Ark accepts the size and payloads stay sane. */
+const MAX_NATIVE = 2048
+
+function capScale(width: number, height: number): { scale: number; width: number; height: number } {
+  const long = Math.max(width, height)
+  if (long <= MAX_NATIVE) return { scale: 1, width, height }
+  const scale = MAX_NATIVE / long
+  return { scale, width: Math.round(width * scale), height: Math.round(height * scale) }
+}
 
 /**
  * Blank a rectangular region with white so a reference-edit model treats it as
@@ -228,15 +237,16 @@ export async function compositeInpaint(
   if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
   const dims = await probe(input, ffmpegPath)
   if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
-  const { width, height } = dims
-  const x = clampInt(region.x * width, 0, width - 1)
-  const y = clampInt(region.y * height, 0, height - 1)
-  const bw = clampInt(region.w * width, 1, width - x)
-  const bh = clampInt(region.h * height, 1, height - y)
+  const capped = capScale(dims.width, dims.height)
+  const x = clampInt(region.x * capped.width, 0, capped.width - 1)
+  const y = clampInt(region.y * capped.height, 0, capped.height - 1)
+  const bw = clampInt(region.w * capped.width, 1, capped.width - x)
+  const bh = clampInt(region.h * capped.height, 1, capped.height - y)
+  const scaleFilter = capped.scale === 1 ? '' : `scale=${capped.width}:${capped.height},`
   await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', input,
-    '-vf', `drawbox=x=${x}:y=${y}:w=${bw}:h=${bh}:color=${MASK_COLOR}@1:t=fill`, output],
+    '-vf', `${scaleFilter}drawbox=x=${x}:y=${y}:w=${bw}:h=${bh}:color=${MASK_COLOR}@1:t=fill`, output],
   { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
-  return { width, height }
+  return { width: capped.width, height: capped.height }
 }
 
 /** Pad the image into a larger canvas, keeping the source in place. */
@@ -250,7 +260,8 @@ export async function compositeOutpaint(
   if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
   const dims = await probe(input, ffmpegPath)
   if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
-  const { width, height } = dims
+  const capped = capScale(dims.width, dims.height)
+  const { width, height } = capped
   const amount = Math.max(0, Math.min(1, expand.amount))
   const horizontal = expand.direction === 'left' || expand.direction === 'right' || expand.direction === 'all'
   const vertical = expand.direction === 'top' || expand.direction === 'bottom' || expand.direction === 'all'
@@ -260,8 +271,79 @@ export async function compositeOutpaint(
   const nh = height + dy
   const ox = expand.direction === 'left' ? dx : expand.direction === 'all' ? Math.round(dx / 2) : 0
   const oy = expand.direction === 'top' ? dy : expand.direction === 'all' ? Math.round(dy / 2) : 0
+  const scaleFilter = capped.scale === 1 ? '' : `scale=${width}:${height},`
   await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error', '-i', input,
-    '-vf', `pad=${nw}:${nh}:${ox}:${oy}:color=${MASK_COLOR}`, output],
+    '-vf', `${scaleFilter}pad=${nw}:${nh}:${ox}:${oy}:color=${MASK_COLOR}`, output],
+  { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
+  return { width: nw, height: nh }
+}
+
+/**
+ * Native inpaint mask: black canvas at the (capped) source size with the region
+ * painted white. White = regenerate, black = keep.
+ */
+export async function compositeMaskInpaint(
+  input: string,
+  output: string,
+  region: CanvasRegion,
+  ffmpegPath?: string | null,
+): Promise<{ width: number; height: number }> {
+  const info = detectFfmpeg(ffmpegPath)
+  if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
+  const dims = await probe(input, ffmpegPath)
+  if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
+  const capped = capScale(dims.width, dims.height)
+  const x = clampInt(region.x * capped.width, 0, capped.width - 1)
+  const y = clampInt(region.y * capped.height, 0, capped.height - 1)
+  const bw = clampInt(region.w * capped.width, 1, capped.width - x)
+  const bh = clampInt(region.h * capped.height, 1, capped.height - y)
+  await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', `color=c=black:s=${capped.width}x${capped.height}`,
+    '-vf', `drawbox=x=${x}:y=${y}:w=${bw}:h=${bh}:color=white@1:t=fill`,
+    '-frames:v', '1', output],
+  { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
+  return { width: capped.width, height: capped.height }
+}
+
+/** Native outpaint mask: black canvas at the target size with the new area white. */
+export async function compositeMaskOutpaint(
+  input: string,
+  output: string,
+  expand: CanvasExpand,
+  ffmpegPath?: string | null,
+): Promise<{ width: number; height: number }> {
+  const info = detectFfmpeg(ffmpegPath)
+  if (info.ffmpeg === undefined) throw new Error(info.error ?? '找不到 ffmpeg')
+  const dims = await probe(input, ffmpegPath)
+  if (dims.width === undefined || dims.height === undefined) throw new Error('无法读取图片尺寸')
+  const capped = capScale(dims.width, dims.height)
+  const { width, height } = capped
+  const amount = Math.max(0, Math.min(1, expand.amount))
+  const horizontal = expand.direction === 'left' || expand.direction === 'right' || expand.direction === 'all'
+  const vertical = expand.direction === 'top' || expand.direction === 'bottom' || expand.direction === 'all'
+  const dx = horizontal ? Math.round(width * amount) : 0
+  const dy = vertical ? Math.round(height * amount) : 0
+  const nw = width + dx
+  const nh = height + dy
+  const ox = expand.direction === 'left' ? dx : expand.direction === 'all' ? Math.round(dx / 2) : 0
+  const oy = expand.direction === 'top' ? dy : expand.direction === 'all' ? Math.round(dy / 2) : 0
+  if (expand.direction === 'all') {
+    // White border around a black (kept) source region.
+    await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', `color=c=white:s=${nw}x${nh}`,
+      '-vf', `drawbox=x=${ox}:y=${oy}:w=${width}:h=${height}:color=black@1:t=fill`,
+      '-frames:v', '1', output],
+    { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
+    return { width: nw, height: nh }
+  }
+  const box = expand.direction === 'right' ? { x: width, y: 0, w: dx, h: height }
+    : expand.direction === 'left' ? { x: 0, y: 0, w: dx, h: height }
+      : expand.direction === 'bottom' ? { x: 0, y: height, w: width, h: dy }
+        : { x: 0, y: 0, w: width, h: dy }
+  await run(info.ffmpeg, ['-y', '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', `color=c=black:s=${nw}x${nh}`,
+    '-vf', `drawbox=x=${box.x}:y=${box.y}:w=${box.w}:h=${box.h}:color=white@1:t=fill`,
+    '-frames:v', '1', output],
   { timeout: 120_000, maxBuffer: 4 * 1024 * 1024 })
   return { width: nw, height: nh }
 }

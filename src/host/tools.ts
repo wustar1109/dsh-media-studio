@@ -217,6 +217,8 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
         mode: { type: 'string', enum: ['inpaint', 'outpaint'], description: 'inpaint=局部重绘/改元素；outpaint=定向扩图' },
         source: { type: 'string', description: '原图：素材库 id、绝对路径或工作区相对路径（未传 composite 时必填）' },
         composite: { type: 'string', description: '浏览器画布合成好的 PNG data URL（已带白遮罩）；传了就不用 source' },
+        image: { type: 'string', description: '原生 mask 的输入图 data URL（inpaint=原图，outpaint=已垫白边的图）；Ark 通道优先走原生 mask' },
+        mask: { type: 'string', description: '原生 mask 的遮罩 data URL（白=重绘区，黑=保留）；与 image 同尺寸' },
         region: {
           type: 'object',
           additionalProperties: false,
@@ -248,6 +250,8 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
         mode: asString(args.mode, 'inpaint') === 'outpaint' ? 'outpaint' : 'inpaint',
         source: asString(args.source) || undefined,
         composite: asString(args.composite) || undefined,
+        image: asString(args.image) || undefined,
+        mask: asString(args.mask) || undefined,
         region: typeof args.region === 'object' && args.region !== null
           ? (() => {
               const r = args.region as Record<string, unknown>

@@ -76,6 +76,7 @@ const studio = new StudioService(ctx, {})
 studio.updateConfig({
   channels: [
     { id: 'openai', kind: 'openai', label: 'mock', enabled: true, baseUrl: base, apiKey: 'test-key-123', imageModel: 'gpt-image-1', videoModel: 'sora-2' },
+    { id: 'ark', kind: 'ark', label: 'ark-mock', enabled: true, baseUrl: base, apiKey: 'test-key-123', imageModel: 'doubao-seedream-4-0' },
     { id: 'comfyui', kind: 'comfyui', label: 'comfy', baseUrl: 'http://127.0.0.1:1' },
   ],
   defaults: { image: 'openai', video: 'openai' },
@@ -218,6 +219,24 @@ studio.updateConfig({
   assert.equal(canvasSettled.state, 'succeeded')
   assert.ok(canvasSettled.assets.length >= 1)
   assert.match(String(canvasSettled.prompt), /局部重绘/)
+
+  // Ark native masked edit: image + mask pair goes straight to the edit adapter.
+  const nativeMask = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'inpaint',
+      prompt: '换成一条河',
+      channel: 'ark',
+      image: PNG_DATA_URL,
+      mask: PNG_DATA_URL,
+      region: { x: 0.2, y: 0.2, w: 0.3, h: 0.3 },
+    }),
+  }).then(response => response.json())
+  assert.equal(nativeMask.ok, true, nativeMask.message)
+  const nativeSettled = await studio.jobs.wait(nativeMask.job.jobId, 10_000)
+  assert.equal(nativeSettled.state, 'succeeded', nativeSettled.error)
+  assert.ok(nativeSettled.assets.length >= 1)
 
   // Composite path without a composite data URL but also without ffmpeg should
   // fail loudly rather than silently producing a broken reference.

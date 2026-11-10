@@ -4,7 +4,7 @@
  * Both APIs live under `/api/v3`; image is synchronous, video is the async
  * `contents/generations/tasks` collection.
  */
-import type { GeneratedImage, GeneratedVideo, ImageRequest, VideoRequest } from '../types.js'
+import type { ChannelConfig, GeneratedImage, GeneratedVideo, ImageRequest, VideoRequest } from '../types.js'
 import { bearer, clampSeconds, decodeImages, failure, pollUntil, refDataUrl, videoResult } from './common.js'
 import { download, errorBody, getWithRetry, joinUrl, postJson } from '../util.js'
 
@@ -36,6 +36,44 @@ export async function generateArkImage(request: ImageRequest): Promise<Generated
   if (!response.ok) throw await failure(response, 'Seedream 图像生成', request.apiKey)
   const payload = await response.json()
   return (await decodeImages(payload, request.maxBytes, request.signal, request.apiKey)).slice(0, request.n)
+}
+
+export interface ArkEditInput {
+  channel: ChannelConfig
+  apiKey: string
+  model: string
+  prompt: string
+  /** The input image (source for inpaint; padded source for outpaint). */
+  image: { data: Buffer; mime: string }
+  /** Grayscale mask, same size as `image`: white = regenerate, black = keep. */
+  mask: { data: Buffer; mime: string }
+  size: string
+  maxBytes: number
+  signal: AbortSignal
+}
+
+/**
+ * Seedream native masked edit (局部重绘 / 扩图). The endpoint is the same
+ * `images/generations`; it accepts an `image` + `mask` pair, white marking the
+ * region to regenerate. Pixel-accurate — nothing outside the mask changes.
+ */
+export async function editArkImage(input: ArkEditInput): Promise<GeneratedImage[]> {
+  const model = input.model.trim()
+  if (model === '') throw new Error('Ark 通道没有配置 imageModel')
+  const body: Record<string, unknown> = {
+    model,
+    prompt: input.prompt,
+    image: [refDataUrl(input.image)],
+    mask: [refDataUrl(input.mask)],
+    size: input.size,
+    response_format: 'b64_json',
+    watermark: false,
+    ...input.channel.extraBody,
+  }
+  const response = await postJson(joinUrl(base({ channel: input.channel }), 'images/generations'), body, bearer(input.apiKey, input.channel.headers), 300_000, input.signal)
+  if (!response.ok) throw await failure(response, 'Seedream 局部重绘', input.apiKey)
+  const payload = await response.json()
+  return (await decodeImages(payload, input.maxBytes, input.signal, input.apiKey)).slice(0, 1)
 }
 
 export async function generateArkVideo(request: VideoRequest): Promise<GeneratedVideo> {
