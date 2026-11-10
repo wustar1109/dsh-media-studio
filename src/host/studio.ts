@@ -805,6 +805,10 @@ export class StudioService {
   saveImages(images: GeneratedImage[], meta: { prompt: string; channel: ChannelConfig; model: string; jobId?: string; refs?: string[]; params?: Record<string, unknown> }): AssetRecord[] {
     return images.map((image, index) => this.library.addBuffer(image.data, {
       kind: 'image',
+      // The provider decides the actual bytes (Seedream returns JPEG even when
+      // asked for b64_json); name the file after the real format or readers
+      // that go by extension will reject it.
+      ext: extForImageMime(image.mime),
       name: `${meta.channel.id}-${index + 1}`,
       meta: {
         prompt: meta.prompt,
@@ -1088,6 +1092,15 @@ function extForMime(mime: string): string {
   if (mime.includes('quicktime')) return '.mov'
   if (mime.includes('matroska')) return '.mkv'
   return '.mp4'
+}
+
+function extForImageMime(mime: string): string {
+  if (mime.includes('jpeg') || mime.includes('jpg')) return '.jpg'
+  if (mime.includes('webp')) return '.webp'
+  if (mime.includes('gif')) return '.gif'
+  if (mime.includes('avif')) return '.avif'
+  if (mime.includes('bmp')) return '.bmp'
+  return '.png'
 }
 
 const IMAGE_MODEL_RE = /(image|dall-e|seedream|flux|sdxl|stable-diffusion|qwen-image|imagen|banana|kolors|glm-image|midjourney)/i
