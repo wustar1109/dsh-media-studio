@@ -98,6 +98,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
   const [region, setRegion] = useState<Region | null>(null)
   const [direction, setDirection] = useState<Direction>('right')
   const [amount, setAmount] = useState(0.5)
+  const [outpaintRect, setOutpaintRect] = useState<Region | null>(null)
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [annotateTool, setAnnotateTool] = useState<'arrow' | 'text'>('arrow')
   const [draftArrow, setDraftArrow] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
@@ -149,6 +150,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     setRegion(null)
     setAnnotations([])
     setDraftArrow(null)
+    setOutpaintRect(null)
     const image = new Image()
     image.onload = () => {
       imgRef.current = image
@@ -158,47 +160,81 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     image.src = source.url
   }, [source, notify])
 
+  const presetRect = useCallback((): Region => {
+    const a = amount
+    let x = 0
+    let y = 0
+    let w = 1
+    let h = 1
+    if (direction === 'left') { x = -a; w = 1 + a }
+    else if (direction === 'right') { w = 1 + a }
+    if (direction === 'top') { y = -a; h = 1 + a }
+    else if (direction === 'bottom') { h = 1 + a }
+    else if (direction === 'all') { x = -a / 2; w = 1 + a; y = -a / 2; h = 1 + a }
+    return { x, y, w, h }
+  }, [direction, amount])
+
+  const effectiveRect = useCallback((): Region => outpaintRect ?? presetRect(), [outpaintRect, presetRect])
+
+  // The outpaint stage is 2× the image so there is room to drag an expansion frame.
+  const stageDim = useCallback((): { w: number; h: number } => {
+    if (natural === null) return { w: MAX_W, h: MAX_H }
+    if (mode === 'outpaint' && panelTab === 'image') return { w: natural.w * 2, h: natural.h * 2 }
+    return { w: natural.w, h: natural.h }
+  }, [natural, mode, panelTab])
+
   const compositeDim = useCallback((): { w: number; h: number } => {
     if (natural === null) return { w: MAX_W, h: MAX_H }
     if (mode === 'outpaint' && panelTab === 'image') {
-      const horizontal = direction === 'left' || direction === 'right' || direction === 'all'
-      const vertical = direction === 'top' || direction === 'bottom' || direction === 'all'
-      const dx = horizontal ? Math.round(natural.w * amount) : 0
-      const dy = vertical ? Math.round(natural.h * amount) : 0
-      return { w: natural.w + dx, h: natural.h + dy }
+      const r = effectiveRect()
+      return { w: Math.max(1, Math.round(r.w * natural.w)), h: Math.max(1, Math.round(r.h * natural.h)) }
     }
     return { w: natural.w, h: natural.h }
-  }, [natural, mode, direction, amount, panelTab])
+  }, [natural, mode, panelTab, effectiveRect])
 
   const sourceOffset = useCallback((): { x: number; y: number } => {
     if (natural === null || mode !== 'outpaint' || panelTab !== 'image') return { x: 0, y: 0 }
-    const horizontal = direction === 'left' || direction === 'right' || direction === 'all'
-    const vertical = direction === 'top' || direction === 'bottom' || direction === 'all'
-    const dx = horizontal ? Math.round(natural.w * amount) : 0
-    const dy = vertical ? Math.round(natural.h * amount) : 0
-    return {
-      x: direction === 'left' ? dx : direction === 'all' ? Math.round(dx / 2) : 0,
-      y: direction === 'top' ? dy : direction === 'all' ? Math.round(dy / 2) : 0,
-    }
-  }, [natural, mode, direction, amount, panelTab])
+    const r = effectiveRect()
+    return { x: Math.round(-r.x * natural.w), y: Math.round(-r.y * natural.h) }
+  }, [natural, mode, panelTab, effectiveRect])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     const image = imgRef.current
     if (canvas === null || image === null || natural === null) return
-    const { w: cw, h: ch } = compositeDim()
-    const scale = Math.min(MAX_W / cw, MAX_H / ch)
-    const dw = Math.max(1, Math.round(cw * scale))
-    const dh = Math.max(1, Math.round(ch * scale))
+    const stage = stageDim()
+    const scale = Math.min(MAX_W / stage.w, MAX_H / stage.h)
+    const dw = Math.max(1, Math.round(stage.w * scale))
+    const dh = Math.max(1, Math.round(stage.h * scale))
     canvas.width = dw
     canvas.height = dh
     cardSizeRef.current = { w: dw, h: dh }
     const ctx = canvas.getContext('2d')
     if (ctx === null) return
+
+    if (mode === 'outpaint' && panelTab === 'image') {
+      // Stage is 2× the image: image in the middle, expansion room on every side.
+      ctx.fillStyle = '#eef0f4'
+      ctx.fillRect(0, 0, dw, dh)
+      ctx.drawImage(image, 0.25 * dw, 0.25 * dh, 0.5 * dw, 0.5 * dh)
+      const rect = effectiveRect()
+      const sx = ((rect.x + 0.5) / 2) * dw
+      const sy = ((rect.y + 0.5) / 2) * dh
+      const sw = (rect.w / 2) * dw
+      const sh = (rect.h / 2) * dh
+      ctx.fillStyle = 'rgba(124,92,255,0.08)'
+      ctx.fillRect(sx, sy, sw, sh)
+      ctx.strokeStyle = '#7c5cff'
+      ctx.lineWidth = 2
+      ctx.setLineDash([7, 5])
+      ctx.strokeRect(sx, sy, sw, sh)
+      ctx.setLineDash([])
+      return
+    }
+
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, dw, dh)
-    const off = sourceOffset()
-    ctx.drawImage(image, off.x * scale, off.y * scale, natural.w * scale, natural.h * scale)
+    ctx.drawImage(image, 0, 0, dw, dh)
     if (mode === 'inpaint' && panelTab === 'image' && region !== null) {
       ctx.fillStyle = 'rgba(255,255,255,0.82)'
       ctx.fillRect(region.x * dw, region.y * dh, region.w * dw, region.h * dh)
@@ -215,7 +251,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       }
       if (draftArrow !== null) drawArrow(ctx, draftArrow.x0 * dw, draftArrow.y0 * dh, draftArrow.x1 * dw, draftArrow.y1 * dh, lineWidth)
     }
-  }, [natural, mode, region, annotations, draftArrow, compositeDim, sourceOffset, panelTab])
+  }, [natural, mode, region, annotations, draftArrow, stageDim, effectiveRect, panelTab])
 
   useEffect(() => { draw() }, [draw])
 
@@ -252,12 +288,28 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     }
   }
 
+  // Stage-normalised (0–1) → image-normalised (0–1 around the source; can go outside).
+  const stageToImage = (p: { x: number; y: number }): { x: number; y: number } => ({ x: p.x * 2 - 0.5, y: p.y * 2 - 0.5 })
+  const rectBetween = (a: { x: number; y: number }, b: { x: number; y: number }): Region => {
+    const ax = a.x * 2 - 0.5
+    const ay = a.y * 2 - 0.5
+    const bx = b.x * 2 - 0.5
+    const by = b.y * 2 - 0.5
+    return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay) }
+  }
+
   const onCardMouseDown = (event: React.MouseEvent<HTMLCanvasElement>): void => {
     if (running || natural === null || panelTab !== 'image') return
     const p = toNormalised(event)
     if (mode === 'inpaint') {
       dragRef.current = p
       setRegion({ x: p.x, y: p.y, w: 0, h: 0 })
+      return
+    }
+    if (mode === 'outpaint') {
+      dragRef.current = p
+      const start = stageToImage(p)
+      setOutpaintRect({ x: start.x, y: start.y, w: 0, h: 0 })
       return
     }
     if (mode === 'annotate') {
@@ -282,12 +334,18 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
         w: Math.abs(p.x - start.x),
         h: Math.abs(p.y - start.y),
       })
+    } else if (mode === 'outpaint') {
+      setOutpaintRect(rectBetween(dragRef.current, p))
     } else if (mode === 'annotate' && annotateTool === 'arrow') {
       const start = dragRef.current
       setDraftArrow({ x0: start.x, y0: start.y, x1: p.x, y1: p.y })
     }
   }
   const onCardMouseUp = (): void => {
+    if (mode === 'outpaint' && dragRef.current !== null && outpaintRect !== null && (outpaintRect.w < 0.05 || outpaintRect.h < 0.05)) {
+      // A stray click: fall back to the preset frame.
+      setOutpaintRect(null)
+    }
     if (mode === 'annotate' && annotateTool === 'arrow' && draftArrow !== null) {
       const { x0, y0, x1, y1 } = draftArrow
       if (Math.hypot(x1 - x0, y1 - y0) > 0.015) {
@@ -444,8 +502,24 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
           body.image = image
           body.mask = mask
           body.composite = composite
-          if (mode === 'inpaint') body.region = region
-          else body.expand = { direction, amount }
+          if (mode === 'inpaint') {
+            body.region = region
+          } else {
+            // Free-drawn frame → a direction/ratio hint for the prompt text.
+            const r = effectiveRect()
+            const left = Math.max(0, -r.x)
+            const right = Math.max(0, r.x + r.w - 1)
+            const top = Math.max(0, -r.y)
+            const bottom = Math.max(0, r.y + r.h - 1)
+            const sides = [
+              left > 0.01 ? 'left' : '',
+              right > 0.01 ? 'right' : '',
+              top > 0.01 ? 'top' : '',
+              bottom > 0.01 ? 'bottom' : '',
+            ].filter(item => item !== '')
+            const hintAmount = Math.min(1, Math.max(left, right, top, bottom, 0.05))
+            body.expand = { direction: sides.length === 1 ? sides[0] : 'all', amount: hintAmount }
+          }
         }
         const { job } = await api.canvasEdit(body)
         const asset = await pollJob(job.jobId)
@@ -560,7 +634,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
               <div className="ms-studio-card">
                 <canvas
                   ref={canvasRef}
-                  className={panelTab === 'image' && (mode === 'inpaint' || mode === 'annotate') ? 'croppable' : ''}
+                  className={panelTab === 'image' ? 'croppable' : ''}
                   onMouseDown={onCardMouseDown}
                   onMouseMove={onCardMouseMove}
                   onMouseUp={onCardMouseUp}
@@ -594,7 +668,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
                 { value: 'outpaint', label: '扩图', icon: 'expand' },
                 { value: 'annotate', label: '标注改图', icon: 'paint' },
               ]}
-              onChange={value => { setMode(value); setRegion(null); setDraftArrow(null) }}
+              onChange={value => { setMode(value); setRegion(null); setDraftArrow(null); setOutpaintRect(null) }}
             />
           ) : null}
 
@@ -640,15 +714,18 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
 
           {panelTab === 'image' && mode === 'outpaint' ? (
             <div className="ms-canvas-expand">
-              <Field label="扩展方向">
+              <Field label="扩展方向（快捷）" hint="也可以直接在画布上拖拽虚线框，自由划定扩展范围">
                 <div className="ms-inline-actions">
                   {DIRECTIONS.map(item => (
-                    <Button key={item.value} size="sm" variant={direction === item.value ? 'primary' : 'soft'} onClick={() => setDirection(item.value)}>{item.label}</Button>
+                    <Button key={item.value} size="sm" variant={direction === item.value ? 'primary' : 'soft'} onClick={() => { setDirection(item.value); setOutpaintRect(null) }}>{item.label}</Button>
                   ))}
+                  {outpaintRect === null ? null : (
+                    <Button size="sm" variant="ghost" icon="refresh" onClick={() => setOutpaintRect(null)}>重置框选</Button>
+                  )}
                 </div>
               </Field>
-              <Field label={`扩展比例：${Math.round(amount * 100)}%`}>
-                <input type="range" min={0.1} max={1} step={0.05} value={amount} onChange={event => setAmount(Number(event.target.value))} className="ms-range" />
+              <Field label={`扩展比例：${Math.round(amount * 100)}%`} hint={`当前画布：${compositeDim().w}×${compositeDim().h}`}>
+                <input type="range" min={0.1} max={1} step={0.05} value={amount} onChange={event => { setAmount(Number(event.target.value)); setOutpaintRect(null) }} className="ms-range" />
               </Field>
             </div>
           ) : null}
