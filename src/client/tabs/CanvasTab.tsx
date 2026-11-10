@@ -1,10 +1,8 @@
 /**
- * 画布：局部重绘（inpaint）、定向扩图（outpaint）、标注改图（annotate）。
+ * 画布工作室：左侧历史、中间无限画布、右侧生成面板。
  *
- * - inpaint/outpaint：浏览器用 HTML5 canvas 合成「白遮罩」PNG，Ark 走原生
- *   mask（image+mask），其他通道走软遮罩参考图编辑。
- * - annotate：在图上画红色箭头 + 文字标注，导出带标注的截图交给模型，模型读
- *   箭头指向与标注文字，生成去掉标注痕迹的干净成品图（Cowart 式）。
+ * - 文生图：prompt + 通道/模型/比例/分辨率/数量 → 直接生成。
+ * - 图生图：局部重绘（框选 + 原生 mask）、扩图、标注改图（Cowart 式）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
@@ -13,16 +11,19 @@ import type { AssetView, ChannelView } from '../types.js'
 import { Icon } from '../icons.js'
 import { Button, Empty, Field, Modal, Segmented, Spinner } from '../ui.js'
 
-type Mode = 'inpaint' | 'outpaint' | 'annotate'
+type PanelTab = 'text' | 'image'
+type HistTab = 'recent' | 'favorite'
+type EditMode = 'inpaint' | 'outpaint' | 'annotate'
 type Direction = 'left' | 'right' | 'top' | 'bottom' | 'all'
 interface Region { x: number; y: number; w: number; h: number }
 interface ArrowAnno { id: string; kind: 'arrow'; x0: number; y0: number; x1: number; y1: number }
 interface LabelAnno { id: string; kind: 'label'; x: number; y: number; text: string }
 type Annotation = ArrowAnno | LabelAnno
 
-const MAX_W = 560
-const MAX_H = 420
+const MAX_W = 640
+const MAX_H = 520
 const ANNO_COLOR = '#ff3b30'
+const ASPECTS = ['auto', '1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3', '21:9'] as const
 const DIRECTIONS: Array<{ value: Direction; label: string }> = [
   { value: 'left', label: '← 左' },
   { value: 'right', label: '→ 右' },
@@ -61,6 +62,23 @@ function drawLabel(ctx: CanvasRenderingContext2D, x: number, y: number, text: st
   ctx.fillText(text, x, y)
 }
 
+function sizeFor(aspect: string, resolution: string, natural?: { w: number; h: number } | null): string | undefined {
+  if (aspect === 'auto') {
+    if (natural === null || natural === undefined) return undefined
+    const long = Math.max(natural.w, natural.h)
+    const max = resolution === '4K' ? 4096 : resolution === '1K' ? 1024 : 2048
+    if (long <= max) return `${natural.w}x${natural.h}`
+    const s = max / long
+    return `${Math.round(natural.w * s)}x${Math.round(natural.h * s)}`
+  }
+  const long = resolution === '4K' ? 4096 : resolution === '1K' ? 1024 : 2048
+  const parts = aspect.split(':')
+  const aw = Number(parts[0])
+  const ah = Number(parts[1])
+  if (!Number.isFinite(aw) || !Number.isFinite(ah) || aw <= 0 || ah <= 0) return undefined
+  return aw >= ah ? `${long}x${Math.round((long * ah) / aw)}` : `${Math.round((long * aw) / ah)}x${long}`
+}
+
 interface CanvasProps {
   channels: ChannelView[]
   notify: (text: string, tone?: 'info' | 'error' | 'ok') => void
@@ -69,35 +87,57 @@ interface CanvasProps {
 
 export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.ReactElement {
   const imageChannels = channels.filter(channel => channel.capabilities.includes('image') && channel.kind !== 'comfyui')
+  const readyCount = imageChannels.filter(channel => channel.ready).length
 
-  const [mode, setMode] = useState<Mode>('inpaint')
+  const [panelTab, setPanelTab] = useState<PanelTab>('text')
+  const [histTab, setHistTab] = useState<HistTab>('recent')
+  const [history, setHistory] = useState<AssetView[]>([])
   const [source, setSource] = useState<AssetView | null>(null)
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  const [mode, setMode] = useState<EditMode>('inpaint')
   const [region, setRegion] = useState<Region | null>(null)
   const [direction, setDirection] = useState<Direction>('right')
   const [amount, setAmount] = useState(0.5)
-  const [prompt, setPrompt] = useState('')
-  const [channelId, setChannelId] = useState('')
-  const [model, setModel] = useState('')
-  const [running, setRunning] = useState(false)
-  const [result, setResult] = useState<AssetView | null>(null)
-  const [pickerOpen, setPickerOpen] = useState(false)
-  const [pickerItems, setPickerItems] = useState<AssetView[]>([])
-
-  // annotation state
   const [annotations, setAnnotations] = useState<Annotation[]>([])
   const [annotateTool, setAnnotateTool] = useState<'arrow' | 'text'>('arrow')
   const [draftArrow, setDraftArrow] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
   const [labelText, setLabelText] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [channelId, setChannelId] = useState('')
+  const [model, setModel] = useState('')
+  const [aspect, setAspect] = useState('auto')
+  const [resolution, setResolution] = useState('2K')
+  const [watermark, setWatermark] = useState('default')
+  const [count, setCount] = useState(1)
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<AssetView | null>(null)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerItems, setPickerItems] = useState<AssetView[]>([])
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const viewportRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ x: number; y: number } | null>(null)
+  const panRef = useRef<{ sx: number; sy: number; ox: number; oy: number } | null>(null)
+  const cardSizeRef = useRef<{ w: number; h: number }>({ w: MAX_W, h: MAX_H })
   const fileRef = useRef<HTMLInputElement | null>(null)
   const idRef = useRef(0)
   const uid = (): string => { idRef.current += 1; return `a${String(idRef.current)}` }
 
   const activeChannel = imageChannels.find(channel => channel.id === channelId)
+
+  const loadHistory = useCallback(async (): Promise<void> => {
+    try {
+      const listed = await api.library({ kind: 'image', limit: '48', ...(histTab === 'favorite' ? { favorite: '1' } : {}) })
+      setHistory(listed.items)
+    } catch {
+      // history is decorative; keep the previous list
+    }
+  }, [histTab])
+
+  useEffect(() => { void loadHistory() }, [loadHistory])
 
   // Load the source image into an HTMLImageElement and read its natural size.
   useEffect(() => {
@@ -109,7 +149,6 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     setRegion(null)
     setAnnotations([])
     setDraftArrow(null)
-    setResult(null)
     const image = new Image()
     image.onload = () => {
       imgRef.current = image
@@ -121,7 +160,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
 
   const compositeDim = useCallback((): { w: number; h: number } => {
     if (natural === null) return { w: MAX_W, h: MAX_H }
-    if (mode === 'outpaint') {
+    if (mode === 'outpaint' && panelTab === 'image') {
       const horizontal = direction === 'left' || direction === 'right' || direction === 'all'
       const vertical = direction === 'top' || direction === 'bottom' || direction === 'all'
       const dx = horizontal ? Math.round(natural.w * amount) : 0
@@ -129,10 +168,10 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       return { w: natural.w + dx, h: natural.h + dy }
     }
     return { w: natural.w, h: natural.h }
-  }, [natural, mode, direction, amount])
+  }, [natural, mode, direction, amount, panelTab])
 
   const sourceOffset = useCallback((): { x: number; y: number } => {
-    if (natural === null || mode !== 'outpaint') return { x: 0, y: 0 }
+    if (natural === null || mode !== 'outpaint' || panelTab !== 'image') return { x: 0, y: 0 }
     const horizontal = direction === 'left' || direction === 'right' || direction === 'all'
     const vertical = direction === 'top' || direction === 'bottom' || direction === 'all'
     const dx = horizontal ? Math.round(natural.w * amount) : 0
@@ -141,7 +180,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       x: direction === 'left' ? dx : direction === 'all' ? Math.round(dx / 2) : 0,
       y: direction === 'top' ? dy : direction === 'all' ? Math.round(dy / 2) : 0,
     }
-  }, [natural, mode, direction, amount])
+  }, [natural, mode, direction, amount, panelTab])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current
@@ -153,20 +192,21 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     const dh = Math.max(1, Math.round(ch * scale))
     canvas.width = dw
     canvas.height = dh
+    cardSizeRef.current = { w: dw, h: dh }
     const ctx = canvas.getContext('2d')
     if (ctx === null) return
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, dw, dh)
     const off = sourceOffset()
     ctx.drawImage(image, off.x * scale, off.y * scale, natural.w * scale, natural.h * scale)
-    if (mode === 'inpaint' && region !== null) {
+    if (mode === 'inpaint' && panelTab === 'image' && region !== null) {
       ctx.fillStyle = 'rgba(255,255,255,0.82)'
       ctx.fillRect(region.x * dw, region.y * dh, region.w * dw, region.h * dh)
       ctx.strokeStyle = '#7c5cff'
       ctx.lineWidth = 1.5
       ctx.strokeRect(region.x * dw, region.y * dh, region.w * dw, region.h * dh)
     }
-    if (mode === 'annotate') {
+    if (mode === 'annotate' && panelTab === 'image') {
       const fontSize = Math.max(13, Math.round(dw / 42))
       const lineWidth = Math.max(2, dw / 260)
       for (const anno of annotations) {
@@ -175,11 +215,33 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       }
       if (draftArrow !== null) drawArrow(ctx, draftArrow.x0 * dw, draftArrow.y0 * dh, draftArrow.x1 * dw, draftArrow.y1 * dh, lineWidth)
     }
-  }, [natural, mode, region, annotations, draftArrow, compositeDim, sourceOffset])
+  }, [natural, mode, region, annotations, draftArrow, compositeDim, sourceOffset, panelTab])
 
   useEffect(() => { draw() }, [draw])
 
-  // ── mouse interaction ─────────────────────────────────────────────────────
+  // Wheel zoom (non-passive so the page does not scroll while zooming the canvas).
+  useEffect(() => {
+    const element = viewportRef.current
+    if (element === null) return
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault()
+      const factor = event.deltaY > 0 ? 0.9 : 1.1
+      setZoom(current => Math.max(0.1, Math.min(4, current * factor)))
+    }
+    element.addEventListener('wheel', onWheel, { passive: false })
+    return () => element.removeEventListener('wheel', onWheel)
+  }, [])
+
+  const fitView = (): void => {
+    const viewport = viewportRef.current
+    if (viewport === null) return
+    const card = cardSizeRef.current
+    const factor = Math.min(viewport.clientWidth / card.w, viewport.clientHeight / card.h) * 0.88
+    setZoom(Math.max(0.1, Math.min(4, factor)))
+    setPan({ x: 0, y: 0 })
+  }
+
+  // ── mouse interaction on the image card ──────────────────────────────────
   const toNormalised = (event: React.MouseEvent<HTMLCanvasElement>): { x: number; y: number } => {
     const canvas = canvasRef.current
     if (canvas === null) return { x: 0, y: 0 }
@@ -190,8 +252,8 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     }
   }
 
-  const onMouseDown = (event: React.MouseEvent<HTMLCanvasElement>): void => {
-    if (running || natural === null) return
+  const onCardMouseDown = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+    if (running || natural === null || panelTab !== 'image') return
     const p = toNormalised(event)
     if (mode === 'inpaint') {
       dragRef.current = p
@@ -209,7 +271,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       }
     }
   }
-  const onMouseMove = (event: React.MouseEvent<HTMLCanvasElement>): void => {
+  const onCardMouseMove = (event: React.MouseEvent<HTMLCanvasElement>): void => {
     if (dragRef.current === null || running) return
     const p = toNormalised(event)
     if (mode === 'inpaint') {
@@ -225,7 +287,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       setDraftArrow({ x0: start.x, y0: start.y, x1: p.x, y1: p.y })
     }
   }
-  const onMouseUp = (): void => {
+  const onCardMouseUp = (): void => {
     if (mode === 'annotate' && annotateTool === 'arrow' && draftArrow !== null) {
       const { x0, y0, x1, y1 } = draftArrow
       if (Math.hypot(x1 - x0, y1 - y0) > 0.015) {
@@ -236,10 +298,20 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     dragRef.current = null
   }
 
-  const removeAnnotation = (id: string): void => setAnnotations(current => current.filter(item => item.id !== id))
-  const clearAnnotations = (): void => { setAnnotations([]); setDraftArrow(null) }
+  // ── viewport pan ──────────────────────────────────────────────────────────
+  const onViewportPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (event.target !== event.currentTarget) return
+    panRef.current = { sx: event.clientX, sy: event.clientY, ox: pan.x, oy: pan.y }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const onViewportPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    const start = panRef.current
+    if (start === null) return
+    setPan({ x: start.ox + (event.clientX - start.sx), y: start.oy + (event.clientY - start.sy) })
+  }
+  const onViewportPointerUp = (): void => { panRef.current = null }
 
-  // Cap the long side so the native-mask payload stays small and Ark accepts the size.
+  // ── payload builders ──────────────────────────────────────────────────────
   const buildPayload = useCallback((): { image: string; mask: string; composite: string } => {
     const src = imgRef.current
     if (src === null || natural === null) throw new Error('还没有底图')
@@ -294,7 +366,6 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     return { image, mask, composite }
   }, [natural, mode, region, compositeDim, sourceOffset])
 
-  // Bake annotations onto the source (full resolution, capped) for annotate mode.
   const buildAnnotated = useCallback((): string => {
     const src = imgRef.current
     if (src === null || natural === null) throw new Error('还没有底图')
@@ -316,48 +387,76 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     return canvas.toDataURL('image/png')
   }, [natural, annotations])
 
-  const run = async (): Promise<void> => {
-    if (source === null) { notify('先选一张底图', 'error'); return }
-    if (mode === 'inpaint' && (region === null || region.w < 0.004 || region.h < 0.004)) { notify('先在图上框选要改的区域', 'error'); return }
-    if (mode !== 'annotate' && prompt.trim() === '') { notify('写一句要改/要扩展的内容', 'error'); return }
-    if (mode === 'annotate' && annotations.length === 0 && prompt.trim() === '') { notify('画上箭头/文字标注，或写一句要求', 'error'); return }
+  const pollJob = async (jobId: string): Promise<AssetView | null> => {
+    for (let i = 0; i < 160; i += 1) {
+      await new Promise(resolve => setTimeout(resolve, 2500))
+      const current = await api.job(jobId)
+      if (current.job.state === 'succeeded') return current.job.assets?.[0] ?? null
+      if (current.job.state === 'failed' || current.job.state === 'cancelled') {
+        notify(current.job.error ?? '任务失败', 'error')
+        return null
+      }
+    }
+    notify('等待超时，稍后在「任务」里查看', 'error')
+    return null
+  }
+
+  const generate = async (): Promise<void> => {
+    if (running) return
+    if (panelTab === 'image' && source === null) { notify('先选一张底图（左侧历史或上传）', 'error'); return }
+    if (panelTab === 'image' && mode === 'inpaint' && (region === null || region.w < 0.004 || region.h < 0.004)) { notify('先在图上框选要改的区域', 'error'); return }
+    if (panelTab === 'image' && mode !== 'annotate' && prompt.trim() === '') { notify('写一句要改/要扩展的内容', 'error'); return }
+    if (panelTab === 'image' && mode === 'annotate' && annotations.length === 0 && prompt.trim() === '') { notify('画上箭头/文字标注，或写一句要求', 'error'); return }
+    if (panelTab === 'text' && prompt.trim() === '') { notify('写一句画面描述', 'error'); return }
     setRunning(true)
     setResult(null)
     try {
-      const body: Record<string, unknown> = {
-        mode,
-        prompt: prompt.trim(),
-        ...(channelId === '' ? {} : { channel: channelId }),
-        ...(model === '' ? {} : { model }),
-      }
-      if (mode === 'annotate') {
-        body.composite = buildAnnotated()
+      if (panelTab === 'text') {
+        const { job } = await api.generateImage({
+          prompt: prompt.trim(),
+          ...(channelId === '' ? {} : { channel: channelId }),
+          ...(model === '' ? {} : { model }),
+          ...(aspect === 'auto' ? {} : { aspectRatio: aspect }),
+          ...(sizeFor(aspect, resolution) === undefined ? {} : { size: sizeFor(aspect, resolution) }),
+          n: count,
+          ...(watermark === 'default' ? {} : { watermark: watermark === 'show' }),
+        })
+        const asset = await pollJob(job.jobId)
+        if (asset !== null) {
+          setResult(asset)
+          setSource(asset)
+          notify('已生成', 'ok')
+          onProduced()
+          void loadHistory()
+        }
       } else {
-        const { image, mask, composite } = buildPayload()
-        body.image = image
-        body.mask = mask
-        body.composite = composite
-        if (mode === 'inpaint') body.region = region
-        else body.expand = { direction, amount }
-      }
-      const { job } = await api.canvasEdit(body)
-      for (let i = 0; i < 120; i += 1) {
-        await new Promise(resolve => setTimeout(resolve, 2500))
-        const current = await api.job(job.jobId)
-        if (current.job.state === 'succeeded') {
-          const asset = current.job.assets?.[0]
-          if (asset !== undefined) { setResult(asset); notify('画布编辑完成', 'ok') }
-          else notify('完成，但没有返回图片', 'error')
-          onProduced()
-          return
+        const body: Record<string, unknown> = {
+          mode,
+          prompt: prompt.trim(),
+          ...(channelId === '' ? {} : { channel: channelId }),
+          ...(model === '' ? {} : { model }),
+          ...(watermark === 'default' ? {} : { watermark: watermark === 'show' }),
         }
-        if (current.job.state === 'failed' || current.job.state === 'cancelled') {
-          notify(current.job.error ?? '任务失败', 'error')
+        if (mode === 'annotate') {
+          body.composite = buildAnnotated()
+        } else {
+          const { image, mask, composite } = buildPayload()
+          body.image = image
+          body.mask = mask
+          body.composite = composite
+          if (mode === 'inpaint') body.region = region
+          else body.expand = { direction, amount }
+        }
+        const { job } = await api.canvasEdit(body)
+        const asset = await pollJob(job.jobId)
+        if (asset !== null) {
+          setResult(asset)
+          setSource(asset)
+          notify('画布编辑完成', 'ok')
           onProduced()
-          return
+          void loadHistory()
         }
       }
-      notify('等待超时，稍后在「任务」里查看', 'error')
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error')
     } finally {
@@ -385,6 +484,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       })
       const { asset } = await api.importDataUrl(dataUrl, file.name.replace(/\.[a-z0-9]+$/i, ''))
       setSource(asset)
+      setPanelTab('image')
       notify('已导入底图', 'ok')
     } catch (error) {
       notify(error instanceof Error ? error.message : String(error), 'error')
@@ -393,36 +493,125 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
 
   const arrowCount = annotations.filter(item => item.kind === 'arrow').length
   const labelCount = annotations.filter(item => item.kind === 'label').length
+  const showCard = source !== null && natural !== null
 
   return (
-    <div className="ms-canvas">
-      <div className="ms-canvas-head">
-        <div>
-          <h3>画布编辑</h3>
-          <p className="ms-hint">框选区域做局部重绘、向某方向扩图，或在图上画箭头/文字标注让模型按标注改图。</p>
+    <div className="ms-studio">
+      {/* ── left history ─────────────────────────────────────────────── */}
+      <aside className="ms-studio-left">
+        <div className="ms-studio-left-head">
+          <Segmented<HistTab>
+            value={histTab}
+            size="sm"
+            options={[{ value: 'recent', label: '最新生成' }, { value: 'favorite', label: '收藏' }]}
+            onChange={setHistTab}
+          />
         </div>
-        <div className="ms-inline-actions">
-          <Button size="sm" variant="soft" icon="grid" onClick={() => { void openPicker() }}>从素材库选</Button>
-          <Button size="sm" variant="soft" icon="upload" onClick={() => fileRef.current?.click()}>上传图片</Button>
-          <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={event => { const file = event.target.files?.[0]; if (file !== undefined) void onFile(file); event.target.value = '' }} />
+        <div className="ms-studio-history">
+          {history.length === 0 ? (
+            <div className="ms-studio-history-empty">暂无生成历史</div>
+          ) : history.map(item => (
+            <button
+              key={item.id}
+              type="button"
+              className={`ms-hist-item${source?.id === item.id ? ' on' : ''}`}
+              title={item.name}
+              onClick={() => { setSource(item); setPanelTab('image') }}
+            >
+              <img src={item.url} alt={item.name} loading="lazy" />
+            </button>
+          ))}
         </div>
-      </div>
+      </aside>
 
-      {source === null || natural === null ? (
-        <Empty icon="image" title="还没有底图" hint="从素材库选一张，或上传本机图片，然后在这里框选 / 扩图 / 标注。" />
-      ) : (
-        <>
-          <Segmented<Mode>
-            value={mode}
+      {/* ── center canvas ────────────────────────────────────────────── */}
+      <main className="ms-studio-center">
+        <div className="ms-studio-topbar">
+          <span className="ms-studio-status"><span className={`ms-dot${readyCount > 0 ? ' on' : ''}`} /> API 已配置 · {readyCount}</span>
+          <div className="ms-studio-tools">
+            <span className="ms-studio-chip"><Icon name="layers" size={13} /> 无限画布</span>
+            <button type="button" className="ms-studio-tool" onClick={fitView}>适应窗口</button>
+            <div className="ms-zoom">
+              <button type="button" onClick={() => setZoom(value => Math.max(0.1, value / 1.15))}>−</button>
+              <span>{Math.round(zoom * 100)}%</span>
+              <button type="button" onClick={() => setZoom(value => Math.min(4, value * 1.15))}>+</button>
+            </div>
+            <button type="button" className="ms-studio-tool" onClick={() => { void openPicker() }}>选图</button>
+            <button type="button" className="ms-studio-tool" onClick={() => fileRef.current?.click()}>上传</button>
+            <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={event => { const file = event.target.files?.[0]; if (file !== undefined) void onFile(file); event.target.value = '' }} />
+          </div>
+        </div>
+
+        <div
+          className="ms-studio-viewport"
+          ref={viewportRef}
+          onPointerDown={onViewportPointerDown}
+          onPointerMove={onViewportPointerMove}
+          onPointerUp={onViewportPointerUp}
+          onPointerLeave={onViewportPointerUp}
+        >
+          {!showCard ? (
+            <div className="ms-studio-empty">
+              <Icon name="image" size={34} />
+              <div>从左侧选择一张图片，或在右侧开始新的生成。</div>
+            </div>
+          ) : (
+            <div className="ms-studio-world" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+              <div className="ms-studio-card">
+                <canvas
+                  ref={canvasRef}
+                  className={panelTab === 'image' && (mode === 'inpaint' || mode === 'annotate') ? 'croppable' : ''}
+                  onMouseDown={onCardMouseDown}
+                  onMouseMove={onCardMouseMove}
+                  onMouseUp={onCardMouseUp}
+                  onMouseLeave={onCardMouseUp}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {/* ── right generation panel ───────────────────────────────────── */}
+      <aside className="ms-studio-right">
+        <div className="ms-studio-panel-head">生成面板</div>
+        <div className="ms-studio-panel-body">
+          <Segmented<PanelTab>
+            value={panelTab}
             options={[
-              { value: 'inpaint', label: '局部重绘', icon: 'crop' },
-              { value: 'outpaint', label: '扩图', icon: 'expand' },
-              { value: 'annotate', label: '标注改图', icon: 'paint' },
+              { value: 'text', label: '文生图', icon: 'sparkles' },
+              { value: 'image', label: '图生图', icon: 'image' },
             ]}
-            onChange={value => { setMode(value); setRegion(null); setDraftArrow(null) }}
+            onChange={setPanelTab}
           />
 
-          {mode === 'annotate' ? (
+          {panelTab === 'image' ? (
+            <Segmented<EditMode>
+              value={mode}
+              size="sm"
+              options={[
+                { value: 'inpaint', label: '局部重绘', icon: 'crop' },
+                { value: 'outpaint', label: '扩图', icon: 'expand' },
+                { value: 'annotate', label: '标注改图', icon: 'paint' },
+              ]}
+              onChange={value => { setMode(value); setRegion(null); setDraftArrow(null) }}
+            />
+          ) : null}
+
+          <Field
+            label={panelTab === 'text' ? '提示词 Prompt *' : mode === 'inpaint' ? '改什么 *' : mode === 'outpaint' ? '扩出的区域画什么 *' : '补充要求（可选）'}
+            hint={panelTab === 'image' ? (mode === 'annotate' ? '标注本身已含要求；这里可补充整体要求' : mode === 'inpaint' ? '只描述选区里要变成的内容' : '只描述新增空白区域的内容') : undefined}
+          >
+            <textarea
+              className="ms-textarea ms-studio-prompt"
+              rows={3}
+              value={prompt}
+              placeholder={panelTab === 'text' ? '描述主体、构图、风格、光线…' : mode === 'inpaint' ? '例如：把猫换成一只戴红围巾的柴犬' : mode === 'outpaint' ? '例如：向右延伸的柏油路与晚霞天空' : '例如：整体保持油画质感'}
+              onChange={event => setPrompt(event.target.value)}
+            />
+          </Field>
+
+          {panelTab === 'image' && mode === 'annotate' ? (
             <div className="ms-anno-bar">
               <Segmented<'arrow' | 'text'>
                 value={annotateTool}
@@ -433,41 +622,23 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
                 ]}
                 onChange={setAnnotateTool}
               />
-              <input
-                className="ms-input ms-anno-text"
-                value={labelText}
-                placeholder="标注文字（加文字时用）"
-                onChange={event => setLabelText(event.target.value)}
-              />
-              <Button size="sm" variant="ghost" icon="trash" onClick={clearAnnotations}>清空标注</Button>
+              <input className="ms-input ms-anno-text" value={labelText} placeholder="标注文字（加文字时用）" onChange={event => setLabelText(event.target.value)} />
+              <Button size="sm" variant="ghost" icon="trash" onClick={() => { setAnnotations([]); setDraftArrow(null) }}>清空</Button>
             </div>
           ) : null}
 
-          <div className="ms-canvas-stage">
-            <canvas
-              ref={canvasRef}
-              className={`ms-canvas-draw${mode === 'inpaint' || mode === 'annotate' ? ' croppable' : ''}`}
-              onMouseDown={onMouseDown}
-              onMouseMove={onMouseMove}
-              onMouseUp={onMouseUp}
-              onMouseLeave={onMouseUp}
-            />
-            <div className="ms-canvas-stage-meta">
-              {mode === 'inpaint'
-                ? (region !== null && region.w >= 0.004
-                    ? `选区：${Math.round(region.w * 100)}% × ${Math.round(region.h * 100)}%（拖动重画）`
-                    : '在图上按住拖动，框出要改的区域')
-                : mode === 'annotate'
-                  ? `${arrowCount} 个箭头 · ${labelCount} 条标注${annotateTool === 'arrow' ? '（拖动画箭头）' : '（点图放置文字）'}`
-                  : `原图 ${natural.w}×${natural.h} → ${compositeDim().w}×${compositeDim().h}`}
+          {panelTab === 'image' && mode === 'annotate' && labelCount > 0 ? (
+            <div className="ms-anno-list">
+              {annotations.map(item => item.kind === 'label' ? (
+                <span key={item.id} className="ms-anno-chip">
+                  <span>{item.text}</span>
+                  <button type="button" onClick={() => setAnnotations(current => current.filter(entry => entry.id !== item.id))} aria-label="删除"><Icon name="close" size={11} /></button>
+                </span>
+              ) : null)}
             </div>
-          </div>
+          ) : null}
 
-          {mode === 'inpaint' ? (
-            <div className="ms-inline-actions">
-              <Button size="sm" variant="ghost" icon="trash" onClick={() => setRegion(null)}>清除选区</Button>
-            </div>
-          ) : mode === 'outpaint' ? (
+          {panelTab === 'image' && mode === 'outpaint' ? (
             <div className="ms-canvas-expand">
               <Field label="扩展方向">
                 <div className="ms-inline-actions">
@@ -476,31 +647,20 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
                   ))}
                 </div>
               </Field>
-              <Field label={`扩展比例：${Math.round(amount * 100)}%`} hint="向所选方向扩出原图该维度的一定比例">
+              <Field label={`扩展比例：${Math.round(amount * 100)}%`}>
                 <input type="range" min={0.1} max={1} step={0.05} value={amount} onChange={event => setAmount(Number(event.target.value))} className="ms-range" />
               </Field>
             </div>
           ) : null}
 
-          {mode === 'annotate' && labelCount > 0 ? (
-            <div className="ms-anno-list">
-              {annotations.map(item => item.kind === 'label' ? (
-                <span key={item.id} className="ms-anno-chip">
-                  <span>{item.text}</span>
-                  <button type="button" onClick={() => removeAnnotation(item.id)} aria-label="删除"><Icon name="close" size={11} /></button>
-                </span>
-              ) : null)}
-            </div>
-          ) : null}
-
           <div className="ms-grid-2">
-            <Field label="使用通道" hint="图像通道；留空用默认">
+            <Field label="Provider">
               <select className="ms-select" value={channelId} onChange={event => { setChannelId(event.target.value); setModel('') }}>
                 <option value="">默认通道</option>
                 {imageChannels.map(channel => <option key={channel.id} value={channel.id}>{channel.label}（{channel.kind}）</option>)}
               </select>
             </Field>
-            <Field label="模型" hint="留空用通道默认模型">
+            <Field label="Model">
               <select className="ms-select" value={model} onChange={event => setModel(event.target.value)}>
                 <option value="">默认模型</option>
                 {(activeChannel?.models?.image ?? []).map(item => <option key={item} value={item}>{item}</option>)}
@@ -508,38 +668,52 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
             </Field>
           </div>
 
-          <Field
-            label={mode === 'inpaint' ? '改什么' : mode === 'outpaint' ? '扩出的区域画什么' : '补充要求（可选）'}
-            hint={mode === 'annotate' ? '标注本身已含要求；这里可补充整体要求' : mode === 'inpaint' ? '只描述选区里要变成的内容' : '只描述新增空白区域的内容'}
-          >
-            <input
-              className="ms-input"
-              value={prompt}
-              placeholder={mode === 'inpaint' ? '例如：把猫换成一只戴红围巾的柴犬' : mode === 'outpaint' ? '例如：向右延伸的柏油路与晚霞天空' : '例如：整体保持油画质感'}
-              onChange={event => setPrompt(event.target.value)}
-            />
-          </Field>
-
-          <div className="ms-inline-actions">
-            <Button variant="primary" icon="sparkles" disabled={running} onClick={() => { void run() }}>
-              {running ? <><Spinner size={13} /> 生成中…</> : mode === 'annotate' ? '按标注修改' : '生成'}
-            </Button>
-            {result !== null ? (
-              <Button variant="soft" icon="refresh" onClick={() => { setSource(result); notify('已把结果设为底图，可继续编辑', 'info') }}>把结果设为底图继续改</Button>
-            ) : null}
+          <div className="ms-grid-2">
+            <Field label="比例">
+              <select className="ms-select" value={aspect} onChange={event => setAspect(event.target.value)}>
+                {ASPECTS.map(item => <option key={item} value={item}>{item === 'auto' ? '自动' : item}</option>)}
+              </select>
+            </Field>
+            <Field label="分辨率">
+              <select className="ms-select" value={resolution} onChange={event => setResolution(event.target.value)}>
+                <option value="1K">1K</option>
+                <option value="2K">2K</option>
+                <option value="4K">4K</option>
+              </select>
+            </Field>
           </div>
-        </>
-      )}
 
-      {result === null ? null : (
-        <div className="ms-canvas-result">
-          <div className="ms-result-title">结果</div>
-          <a href={result.downloadUrl} download>
-            <img src={result.url} alt={result.name} />
-          </a>
-          <div className="ms-hint">点击图片下载原图。</div>
+          <div className="ms-grid-2">
+            <Field label="可见水印" hint="方舟通道生效">
+              <select className="ms-select" value={watermark} onChange={event => setWatermark(event.target.value)}>
+                <option value="default">渠道默认</option>
+                <option value="show">显示</option>
+                <option value="hide">隐藏</option>
+              </select>
+            </Field>
+            <Field label="生成数量">
+              <select className="ms-select" value={count} onChange={event => setCount(Number(event.target.value))} disabled={panelTab === 'image'}>
+                {[1, 2, 3, 4].map(item => <option key={item} value={item}>{item} 张</option>)}
+              </select>
+            </Field>
+          </div>
+
+          <Button variant="primary" icon="sparkles" disabled={running} onClick={() => { void generate() }}>
+            {running ? <><Spinner size={13} /> 生成中…</> : panelTab === 'image' && mode === 'annotate' ? '按标注修改' : '开始生成'}
+          </Button>
+
+          {result !== null ? (
+            <div className="ms-studio-result">
+              <a href={result.downloadUrl} download><img src={result.url} alt={result.name} /></a>
+              <Button size="sm" variant="ghost" icon="refresh" onClick={() => { setSource(result); setPanelTab('image'); notify('已把结果设为底图，可继续编辑', 'info') }}>设为底图继续改</Button>
+            </div>
+          ) : null}
+
+          {panelTab === 'image' && region !== null && mode === 'inpaint' ? (
+            <Button size="sm" variant="ghost" icon="trash" onClick={() => setRegion(null)}>清除选区</Button>
+          ) : null}
         </div>
-      )}
+      </aside>
 
       <Modal open={pickerOpen} onClose={() => setPickerOpen(false)} title="选择底图" wide>
         {pickerItems.length === 0 ? (
@@ -547,7 +721,7 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
         ) : (
           <div className="ms-canvas-picker">
             {pickerItems.map(item => (
-              <button key={item.id} type="button" className="ms-canvas-pick" onClick={() => { setSource(item); setPickerOpen(false) }}>
+              <button key={item.id} type="button" className="ms-canvas-pick" onClick={() => { setSource(item); setPanelTab('image'); setPickerOpen(false) }}>
                 <img src={item.url} alt={item.name} loading="lazy" />
                 <span>{item.name}</span>
               </button>

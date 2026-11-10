@@ -197,6 +197,7 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
           quality: optional(body.quality),
           n: typeof body.n === 'number' ? body.n : undefined,
           refs: stringArray(body.refs),
+          ...(typeof body.watermark === 'boolean' ? { watermark: body.watermark } : {}),
         })
         return { ok: true, job: jobView(job) }
       },
@@ -251,6 +252,7 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
           size: optional(body.size),
           aspectRatio: optional(body.aspectRatio),
           n: typeof body.n === 'number' ? body.n : undefined,
+          ...(typeof body.watermark === 'boolean' ? { watermark: body.watermark } : {}),
         })
         return { ok: true, job: jobView(job) }
       },

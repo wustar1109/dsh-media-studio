@@ -76,7 +76,7 @@
 ### 1.5 统一面板（5 页签）
 
 - **创作**：图像 / 视频 / 分镜 / ComfyUI 四种模式一个表单；参考图可拖入、从素材库选；右侧结果区直接「作参考」再改。
-- **画布**：选一张底图后**框选区域做局部重绘**（指定位置改图、改元素）、**向某个方向扩图**，或**标注改图**（在图上画红色箭头 + 文字标注，模型读箭头指向与标注文字，生成去掉标注痕迹的干净成品图，Cowart 式）。**火山方舟 / Seedream 走原生 mask 接口**（`image` + `mask`，白色=重绘区），像素级锁定、选区外不动；其他通道（OpenAI / Gemini / 中转）用白色软遮罩 + 参考图编辑兜底。结果可「设为底图」继续迭代。
+- **画布**：三栏工作室——**左侧历史、中间无限画布、右侧生成面板**。支持文生图与图生图：局部重绘（框选 + 原生 mask）、扩图、标注改图（Cowart 式：画红色箭头 + 文字标注，模型读标注生成干净成品图）。**火山方舟 / Seedream 走原生 mask 接口**（`image` + `mask`，白色=重绘区），像素级锁定；其他通道用白色软遮罩 + 参考图编辑兜底。画布可拖拽平移、滚轮缩放、适应窗口，结果可「设为底图」继续迭代。
 - **ComfyUI 工作流**：支持**上传 `.json` 文件**（按钮或拖入窗口）或直接粘贴 API 格式 JSON；UI 格式会当场提示重新导出。已配置的 ComfyUI 也会出现在图像/视频的通道下拉里，选中即切到工作流模式。没有 KSampler 的视频工作流（如 MiniMax H3 / WAN）也能从 conditioning 的 `prompt` 或标题为 Prompt/Text 的字符串节点识别出提示词；H3 的 `length` 会按 24fps 的 `5 + 17k` 规则在「秒」与「帧」之间转换，seed 与尺寸也会暴露；模板自带图片的槽位是可选的。
 - **任务**：全部异步任务、状态、进度、取消、产物。
 - **素材库**：搜索 / 图片视频筛选 / 收藏 / 详情 / 下载 / 多选视频拼接 / 登记本机文件。
@@ -94,7 +94,7 @@ dsh plugin --profile desktop add link:D:/path/to/dsh-media-studio
 dsh plugin --profile desktop add github:wustar1109/dsh-media-studio
 
 # 或从 Release 资产装入（带 SHA256SUMS）
-dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.3.2/dsh-media-studio-0.3.2.tgz
+dsh plugin --profile desktop add https://github.com/wustar1109/dsh-media-studio/releases/download/v0.4.0/dsh-media-studio-0.4.0.tgz
 ```
 
 装完重启 DSH，左侧栏出现「媒体工作台」图标；主界面也会多一个同名面板。若宿主版本较老，入口在「设置 → 插件 → 已安装」。

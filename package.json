@@ -1,6 +1,6 @@
 {
   "name": "dsh-media-studio",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "One studio for DSH: cloud image + video generation and local ComfyUI workflows share one channel registry, one async job queue, one asset library and one panel.",
   "type": "module",
   "main": "lib/index.js",

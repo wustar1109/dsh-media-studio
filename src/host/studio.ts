@@ -33,6 +33,8 @@ export interface GenerationArgs {
   n?: number
   seed?: number
   wait?: boolean
+  /** Provider-specific watermark toggle (Ark reads it from extraBody). */
+  watermark?: boolean
 }
 
 export interface VideoArgs {
@@ -92,6 +94,7 @@ export interface CanvasArgs {
   aspectRatio?: string
   n?: number
   wait?: boolean
+  watermark?: boolean
 }
 
 function loggerOf(ctx: HostContext): Logger {
@@ -383,6 +386,11 @@ export class StudioService {
     const channel = this.requireChannel('image', args.channel)
     if (channel.kind === 'comfyui') throw new Error('ComfyUI 通道请用 media_comfy_run（需要先选定工作流）')
     const model = resolveModel(channel, 'image', args.model)
+    // `watermark` is provider-specific (Ark reads it from extraBody); only
+    // override when the caller asked for a specific value.
+    const effective: ChannelConfig = args.watermark === undefined
+      ? channel
+      : { ...channel, extraBody: { ...(channel.extraBody ?? {}), watermark: args.watermark } }
     const refs = (args.refs ?? []).slice(0, 5).map(ref => this.resolveRef(ref))
     const key = apiKeyOf(channel)
     if (key === '') throw new Error(`通道 ${channel.label} 缺少 API Key`)
@@ -396,7 +404,7 @@ export class StudioService {
       params: { n, refs: refs.map(ref => ref.path), size: args.size, aspectRatio: args.aspectRatio, negative: args.negative },
     }, async context => {
       const request: ImageRequest = {
-        channel: { ...channel, imageModel: model },
+        channel: { ...effective, imageModel: model },
         apiKey: key,
         prompt,
         ...(args.negative === undefined ? {} : { negative: args.negative }),
@@ -453,6 +461,7 @@ export class StudioService {
         size: args.size,
         aspectRatio,
         n: args.n ?? 1,
+        ...(args.watermark === undefined ? {} : { watermark: args.watermark }),
       })
     }
 
@@ -505,7 +514,7 @@ export class StudioService {
       }, async context => {
         context.progress('正在请求 Seedream 局部重绘…')
         const images = await editArkImage({
-          channel: { ...channel, imageModel: model },
+          channel: { ...channel, imageModel: model, ...(args.watermark === undefined ? {} : { extraBody: { ...(channel.extraBody ?? {}), watermark: args.watermark } }) },
           apiKey: key,
           model,
           prompt: instruction,
@@ -559,6 +568,7 @@ export class StudioService {
       size: args.size,
       aspectRatio,
       n: args.n ?? 1,
+      ...(args.watermark === undefined ? {} : { watermark: args.watermark }),
     })
   }
 

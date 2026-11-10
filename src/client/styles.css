@@ -330,3 +330,53 @@
 .ms-anno-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ms-anno-chip button{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--ms-muted);cursor:pointer;padding:0;border-radius:50%;width:16px;height:16px}
 .ms-anno-chip button:hover{color:var(--ms-danger)}
+
+/* ── canvas studio (left history / center canvas / right panel) ── */
+.ms-studio{flex:1;min-height:0;display:grid;grid-template-columns:210px minmax(0,1fr) 340px;overflow:hidden;background:var(--ms-bg)}
+
+.ms-studio-left{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--ms-line);background:var(--ms-surface)}
+.ms-studio-left-head{padding:10px 12px;border-bottom:1px solid var(--ms-line);flex-shrink:0}
+.ms-studio-history{flex:1;min-height:0;overflow:auto;padding:10px;display:grid;grid-template-columns:repeat(2,1fr);gap:8px;align-content:start}
+.ms-studio-history-empty{grid-column:1/-1;text-align:center;color:var(--ms-muted);font-size:.8em;padding:26px 4px}
+.ms-hist-item{border:1px solid var(--ms-line);border-radius:9px;padding:3px;background:var(--ms-bg);cursor:pointer;min-width:0;transition:border-color .12s ease,box-shadow .12s ease}
+.ms-hist-item:hover{border-color:var(--ms-line-strong)}
+.ms-hist-item.on{border-color:var(--ms-accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--ms-accent) 18%,transparent)}
+.ms-hist-item img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;display:block;background:var(--ms-sunken)}
+
+.ms-studio-center{display:flex;flex-direction:column;min-width:0;min-height:0}
+.ms-studio-topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 14px;border-bottom:1px solid var(--ms-line);flex-shrink:0;flex-wrap:wrap}
+.ms-studio-status{display:inline-flex;align-items:center;gap:6px;font-size:.78em;color:var(--ms-muted)}
+.ms-studio-status .ms-dot{width:7px;height:7px;border-radius:50%;background:var(--ms-line-strong)}
+.ms-studio-status .ms-dot.on{background:var(--ms-ok)}
+.ms-studio-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ms-studio-chip{display:inline-flex;align-items:center;gap:5px;font-size:.78em;color:var(--ms-muted);border:1px solid var(--ms-line);border-radius:8px;padding:4px 8px}
+.ms-studio-tool{font-size:.78em;color:var(--ms-muted);border:1px solid var(--ms-line);background:var(--ms-bg);border-radius:8px;padding:4px 9px;cursor:pointer}
+.ms-studio-tool:hover{border-color:var(--ms-line-strong);color:var(--ms-text)}
+.ms-zoom{display:inline-flex;align-items:center;border:1px solid var(--ms-line);border-radius:8px;overflow:hidden;font-size:.78em;background:var(--ms-bg)}
+.ms-zoom button{border:0;background:transparent;cursor:pointer;color:var(--ms-muted);padding:3px 8px;line-height:1}
+.ms-zoom button:hover{color:var(--ms-text);background:var(--ms-surface)}
+.ms-zoom span{padding:0 6px;min-width:42px;text-align:center;color:var(--ms-muted);border-left:1px solid var(--ms-line);border-right:1px solid var(--ms-line)}
+
+.ms-studio-viewport{flex:1;min-height:0;position:relative;overflow:hidden;display:grid;place-items:center;background-color:var(--ms-bg);background-image:radial-gradient(color-mix(in srgb,var(--ms-line-strong) 70%,transparent) 1px,transparent 1px);background-size:18px 18px;background-position:center;cursor:grab;touch-action:none}
+.ms-studio-viewport:active{cursor:grabbing}
+.ms-studio-empty{display:flex;flex-direction:column;align-items:center;gap:10px;color:var(--ms-muted);font-size:.86em;text-align:center;pointer-events:none}
+.ms-studio-world{transform-origin:center center;will-change:transform}
+.ms-studio-card{background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 18px 50px -20px #0006,0 0 0 1px var(--ms-line);line-height:0}
+.ms-studio-card canvas{display:block;max-width:none}
+.ms-studio-card canvas.croppable{cursor:crosshair}
+
+.ms-studio-right{display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--ms-line);background:var(--ms-surface)}
+.ms-studio-panel-head{padding:12px 16px;border-bottom:1px solid var(--ms-line);font-weight:600;font-size:.9em;flex-shrink:0}
+.ms-studio-panel-body{flex:1;min-height:0;overflow:auto;padding:14px 16px 24px;display:flex;flex-direction:column;gap:12px}
+.ms-studio-prompt{resize:vertical;min-height:76px;font-family:inherit}
+.ms-studio-result{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--ms-line);padding-top:12px}
+.ms-studio-result img{width:100%;border-radius:10px;border:1px solid var(--ms-line);display:block}
+
+@container (max-width: 980px){
+  .ms-studio{grid-template-columns:minmax(0,1fr) 300px}
+  .ms-studio-left{display:none}
+}
+@container (max-width: 720px){
+  .ms-studio{grid-template-columns:minmax(0,1fr)}
+  .ms-studio-right{border-left:0;border-top:1px solid var(--ms-line);max-height:46%}
+}
