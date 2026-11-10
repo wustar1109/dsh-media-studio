@@ -44,6 +44,7 @@ assert.equal(typeof routes[0].handler, 'function')
 const names = tools.map(tool => tool.name).sort()
 assert.deepEqual(names, [
   'media_canvas_edit',
+  'media_canvas_state',
   'media_channels',
   'media_comfy_run',
   'media_comfy_workflows',

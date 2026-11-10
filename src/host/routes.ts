@@ -258,6 +258,20 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
       },
     },
     {
+      method: 'GET',
+      pattern: /^\/canvas\/state$/,
+      handler: () => ({ ok: true, ...studio.getCanvasState() }),
+    },
+    {
+      method: 'PUT',
+      pattern: /^\/canvas\/state$/,
+      handler: async ({ body }) => {
+        const patch = body !== null && typeof body === 'object' ? body as Record<string, unknown> : {}
+        const { state, revision } = studio.setCanvasState(patch as never)
+        return { ok: true, state, revision }
+      },
+    },
+    {
       method: 'POST',
       pattern: /^\/storyboard$/,
       handler: async ({ body }) => {
@@ -461,7 +475,7 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
       return
     }
     try {
-      const body = method === 'POST' ? await readBody(req) : {}
+      const body = method === 'POST' || method === 'PUT' ? await readBody(req) : {}
       const result = await guard(matched.route.handler)({ params: matched.params, body, url, req, res }) as RouteResult | Record<string, unknown>
       if (typeof result === 'object' && result !== null && ('file' in result)) {
         const file = (result as { file: string }).file

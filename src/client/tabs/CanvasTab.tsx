@@ -136,6 +136,8 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
   const cardSizeRef = useRef<{ w: number; h: number }>({ w: MAX_W, h: MAX_H })
   const fileRef = useRef<HTMLInputElement | null>(null)
   const idRef = useRef(0)
+  const applyingRemoteRef = useRef(false)
+  const lastKnownRevisionRef = useRef(0)
   const uid = (): string => { idRef.current += 1; return `a${String(idRef.current)}` }
 
   const activeChannel = imageChannels.find(channel => channel.id === channelId)
@@ -143,13 +145,90 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
   const loadHistory = useCallback(async (): Promise<void> => {
     try {
       const listed = await api.library({ kind: 'image', limit: '48', ...(histTab === 'favorite' ? { favorite: '1' } : {}) })
-      setHistory(listed.items)
+      setHistory(current => {
+        const same = current.length === listed.items.length && current.every((item, index) => item.id === listed.items[index]?.id)
+        return same ? current : listed.items
+      })
     } catch {
       // history is decorative; keep the previous list
     }
   }, [histTab])
 
   useEffect(() => { void loadHistory() }, [loadHistory])
+  // Keep the history fresh so chat-generated results appear without a manual refresh.
+  useEffect(() => {
+    const timer = window.setInterval(() => { void loadHistory() }, 2500)
+    return () => window.clearInterval(timer)
+  }, [loadHistory])
+
+  // ── chat ⇄ canvas bridge ────────────────────────────────────────────────
+  const applyRemote = useCallback((state: Record<string, unknown>): void => {
+    applyingRemoteRef.current = true
+    if (typeof state.panelTab === 'string') setPanelTab(state.panelTab as PanelTab)
+    if (typeof state.mode === 'string') setMode(state.mode as EditMode)
+    if (typeof state.prompt === 'string') setPrompt(state.prompt)
+    if (typeof state.channelId === 'string') setChannelId(state.channelId)
+    if (typeof state.model === 'string') setModel(state.model)
+    if (typeof state.aspect === 'string') setAspect(state.aspect)
+    if (typeof state.resolution === 'string') setResolution(state.resolution)
+    if (state.targetSize !== null && typeof state.targetSize === 'object') {
+      const t = state.targetSize as { w: number; h: number }
+      setCustomW(String(t.w))
+      setCustomH(String(t.h))
+    }
+    if (state.imagePos !== null && typeof state.imagePos === 'object') {
+      const p = state.imagePos as { x: number; y: number }
+      setImagePos(p)
+    } else if (state.imagePos === null) {
+      setImagePos(null)
+    }
+    if (state.region !== null && typeof state.region === 'object') {
+      setRegion(state.region as Region)
+    } else if (state.region === null) {
+      setRegion(null)
+    }
+    if (Array.isArray(state.annotations)) setAnnotations(state.annotations as Annotation[])
+    if (typeof state.sourceId === 'string') {
+      if (state.sourceId === '' || state.sourceId === null) {
+        setSource(null)
+      } else {
+        const id = state.sourceId
+        setSource({
+          id,
+          kind: 'image',
+          name: typeof state.sourceName === 'string' && state.sourceName !== '' ? state.sourceName : id,
+          path: '',
+          url: typeof state.sourceUrl === 'string' && state.sourceUrl !== '' ? state.sourceUrl : `/media-studio/api/asset/${id}`,
+          downloadUrl: `/media-studio/api/asset/${id}?download=1`,
+          bytes: 0,
+          favorite: false,
+          tags: [],
+          createdAt: '',
+        })
+      }
+    }
+    window.setTimeout(() => { applyingRemoteRef.current = false }, 150)
+  }, [])
+
+  // Poll the host: when the chat tools change the state, apply it here.
+  useEffect(() => {
+    let cancelled = false
+    const poll = async (): Promise<void> => {
+      try {
+        const { revision, state } = await api.canvasState()
+        if (cancelled) return
+        if (revision > lastKnownRevisionRef.current) {
+          lastKnownRevisionRef.current = revision
+          applyRemote(state)
+        }
+      } catch {
+        // bridge is best-effort
+      }
+    }
+    const timer = window.setInterval(() => { void poll() }, 2000)
+    void poll()
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [applyRemote])
 
   // Load the source image into an HTMLImageElement and read its natural size.
   useEffect(() => {
@@ -158,10 +237,12 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
       setNatural(null)
       return
     }
-    setRegion(null)
-    setAnnotations([])
-    setDraftArrow(null)
-    setImagePos(null)
+    if (!applyingRemoteRef.current) {
+      setRegion(null)
+      setAnnotations([])
+      setDraftArrow(null)
+      setImagePos(null)
+    }
     const image = new Image()
     image.onload = () => {
       imgRef.current = image
@@ -199,6 +280,35 @@ export function CanvasTab({ channels, notify, onProduced }: CanvasProps): React.
     if (natural === null || mode !== 'outpaint' || panelTab !== 'image') return { x: 0, y: 0 }
     return imageOffset()
   }, [natural, mode, panelTab, imageOffset])
+
+  // Push local state to the host (debounced) so the chat tools can read it.
+  const reportState = useCallback((): void => {
+    if (applyingRemoteRef.current) return
+    const patch: Record<string, unknown> = {
+      sourceId: source?.id ?? null,
+      sourceUrl: source?.url,
+      sourceName: source?.name,
+      panelTab,
+      mode,
+      prompt,
+      channelId,
+      model,
+      aspect,
+      resolution,
+    }
+    if (mode === 'outpaint') {
+      patch.targetSize = targetSize()
+      patch.imagePos = imagePos
+    }
+    if (mode === 'inpaint') patch.region = region
+    if (mode === 'annotate') patch.annotations = annotations
+    void api.setCanvasState(patch).then(({ revision }) => { lastKnownRevisionRef.current = revision }).catch(() => {})
+  }, [source, panelTab, mode, prompt, channelId, model, aspect, resolution, targetSize, imagePos, region, annotations])
+
+  useEffect(() => {
+    const timer = window.setTimeout(reportState, 350)
+    return () => window.clearTimeout(timer)
+  }, [reportState])
 
   const draw = useCallback(() => {
     const canvas = canvasRef.current

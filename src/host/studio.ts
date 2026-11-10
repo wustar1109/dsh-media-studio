@@ -97,6 +97,24 @@ export interface CanvasArgs {
   watermark?: boolean
 }
 
+/** Shared state between the canvas panel and the chat tools. */
+export interface CanvasStateRecord {
+  sourceId?: string | null
+  sourceUrl?: string
+  sourceName?: string
+  panelTab?: 'text' | 'image'
+  mode?: 'inpaint' | 'outpaint' | 'annotate'
+  targetSize?: { w: number; h: number }
+  imagePos?: { x: number; y: number } | null
+  region?: { x: number; y: number; w: number; h: number } | null
+  annotations?: Array<{ id: string; kind: 'arrow' | 'label'; x0?: number; y0?: number; x1?: number; y1?: number; x?: number; y?: number; text?: string }>
+  prompt?: string
+  channelId?: string
+  model?: string
+  aspect?: string
+  resolution?: string
+}
+
 function loggerOf(ctx: HostContext): Logger {
   const raw = ctx.logger as { info?: Logger['info']; warn?: Logger['warn']; error?: Logger['error'] } | undefined
   if (typeof raw?.info === 'function') return raw as Logger
@@ -113,6 +131,9 @@ export class StudioService {
   private readonly ctx: HostContext
   /** Serialised per-channel key so a panel edit is visible immediately. */
   private revision = 0
+  /** Shared canvas state: the bridge between the panel and the chat tools. */
+  private canvasState: CanvasStateRecord = {}
+  private canvasRevision = 0
 
   constructor(ctx: HostContext, entryConfig: unknown) {
     this.ctx = ctx
@@ -138,6 +159,26 @@ export class StudioService {
     // Fixed at startup: changing outputDir in the panel needs a restart, and
     // reporting the new path while writing to the old one would be a lie.
     return { dir: this.outputDir, source: this.outputSource }
+  }
+
+  // ── canvas bridge (panel ⇄ chat) ─────────────────────────────────────────
+
+  getCanvasState(): { state: CanvasStateRecord; revision: number } {
+    return { state: this.canvasState, revision: this.canvasRevision }
+  }
+
+  setCanvasState(patch: CanvasStateRecord): { state: CanvasStateRecord; revision: number } {
+    const next: CanvasStateRecord = { ...this.canvasState, ...patch }
+    // Resolve a source id into its url + name so the panel can rebuild the
+    // asset without re-fetching the whole library.
+    if (typeof next.sourceId === 'string' && next.sourceId !== '') {
+      const asset = this.library.get(next.sourceId)
+      next.sourceUrl = asset === undefined ? next.sourceUrl : `/media-studio/api/asset/${asset.id}`
+      next.sourceName = asset?.name ?? next.sourceName
+    }
+    this.canvasState = next
+    this.canvasRevision += 1
+    return { state: this.canvasState, revision: this.canvasRevision }
   }
 
   getLibrary(): AssetLibrary {

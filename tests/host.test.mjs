@@ -249,6 +249,21 @@ studio.updateConfig({
   assert.equal(annotateSettled.state, 'succeeded', annotateSettled.error)
   assert.match(String(annotateSettled.prompt), /箭头和文字标注/)
 
+  // Canvas state bridge: panel ⇄ chat.
+  const putState = await fetch(`${apiBase}/media-studio/api/canvas/state`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ sourceId: library.items[0].id, mode: 'outpaint', targetSize: { w: 2048, h: 1152 }, imagePos: { x: 40, y: 20 } }),
+  }).then(response => response.json())
+  assert.equal(putState.ok, true)
+  assert.ok(putState.revision >= 1)
+  assert.equal(putState.state.sourceId, library.items[0].id)
+  assert.match(putState.state.sourceUrl, /\/media-studio\/api\/asset\//)
+  const getState = await fetch(`${apiBase}/media-studio/api/canvas/state`).then(response => response.json())
+  assert.equal(getState.revision, putState.revision)
+  assert.equal(getState.state.targetSize.w, 2048)
+  assert.equal(getState.state.imagePos.x, 40)
+
   // Composite path without a composite data URL but also without ffmpeg should
   // fail loudly rather than silently producing a broken reference.
   const noFfmpeg = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {

@@ -274,6 +274,60 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
     },
   }
 
+  const canvasStateTool: ToolSpec = {
+    name: 'media_canvas_state',
+    description:
+      '读写画布面板的当前状态，实现聊天与画布双向联动。action=get 读当前状态（底图、模式、扩图目标底、标注、prompt、通道等）；'
+      + 'action=set 设置状态（sourceId 传素材库 id，可配合 targetSize/imagePos/mode/prompt 指定扩图或重绘），画布面板会自动同步。',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'], description: '默认 get' },
+        sourceId: { type: 'string', description: '底图素材 id；空字符串清除底图' },
+        panelTab: { type: 'string', enum: ['text', 'image'] },
+        mode: { type: 'string', enum: ['inpaint', 'outpaint', 'annotate'] },
+        targetSize: { type: 'object', additionalProperties: false, properties: { w: { type: 'number' }, h: { type: 'number' } }, description: '扩图目标底尺寸（像素）' },
+        imagePos: { type: 'object', additionalProperties: false, properties: { x: { type: 'number' }, y: { type: 'number' } }, description: '原图在目标底上的偏移（像素）' },
+        region: { type: 'object', additionalProperties: false, properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } }, description: '局部重绘区域（0–1 归一化）' },
+        prompt: { type: 'string', description: '生成/编辑提示词' },
+        channelId: { type: 'string' },
+        model: { type: 'string' },
+        aspect: { type: 'string' },
+        resolution: { type: 'string' },
+      },
+    },
+    output: jsonOutput(),
+    async execute(args) {
+      if (args.action === 'set') {
+        const patch: Record<string, unknown> = {}
+        if (typeof args.sourceId === 'string') patch.sourceId = args.sourceId === '' ? null : args.sourceId
+        if (typeof args.panelTab === 'string') patch.panelTab = args.panelTab
+        if (typeof args.mode === 'string') patch.mode = args.mode
+        if (args.targetSize !== null && typeof args.targetSize === 'object') {
+          const t = args.targetSize as Record<string, unknown>
+          if (typeof t.w === 'number' && typeof t.h === 'number') patch.targetSize = { w: t.w, h: t.h }
+        }
+        if (args.imagePos !== null && typeof args.imagePos === 'object') {
+          const p = args.imagePos as Record<string, unknown>
+          if (typeof p.x === 'number' && typeof p.y === 'number') patch.imagePos = { x: p.x, y: p.y }
+        }
+        if (args.region !== null && typeof args.region === 'object') {
+          const r = args.region as Record<string, unknown>
+          if (typeof r.x === 'number' && typeof r.y === 'number' && typeof r.w === 'number' && typeof r.h === 'number') patch.region = { x: r.x, y: r.y, w: r.w, h: r.h }
+        }
+        if (typeof args.prompt === 'string') patch.prompt = args.prompt
+        if (typeof args.channelId === 'string') patch.channelId = args.channelId
+        if (typeof args.model === 'string') patch.model = args.model
+        if (typeof args.aspect === 'string') patch.aspect = args.aspect
+        if (typeof args.resolution === 'string') patch.resolution = args.resolution
+        const { state, revision } = studio.setCanvasState(patch as never)
+        return { ok: true, state, revision }
+      }
+      return { ok: true, ...studio.getCanvasState() }
+    },
+  }
+
   const videoTool: ToolSpec = {
     name: 'media_generate_video',
     description:
@@ -606,7 +660,7 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
     },
   }
 
-  return [channelsTool, imageTool, canvasTool, videoTool, comfyListTool, comfyRunTool, jobTool, libraryTool, storyboardTool, concatTool]
+  return [channelsTool, imageTool, canvasTool, canvasStateTool, videoTool, comfyListTool, comfyRunTool, jobTool, libraryTool, storyboardTool, concatTool]
 }
 
 /** Recursively drop `undefined` and turn non-finite numbers into null. */
