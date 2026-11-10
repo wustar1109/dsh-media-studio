@@ -5,7 +5,7 @@ export type IconName =
   | 'sparkles' | 'film' | 'grid' | 'plug' | 'close' | 'play' | 'star'
   | 'trash' | 'refresh' | 'upload' | 'download' | 'check' | 'alert' | 'plus'
   | 'image' | 'clock' | 'settings' | 'folder' | 'link' | 'chevron' | 'layers'
-  | 'paint' | 'expand' | 'crop'
+  | 'paint' | 'expand' | 'crop' | 'arrow' | 'type'
 
 const PATHS: Record<IconName, JSX.Element> = {
   sparkles: <><path d="M12 3l1.7 4.6L18 9.3l-4.3 1.7L12 15.6l-1.7-4.6L6 9.3l4.3-1.7L12 3Z" /><path d="M18.5 14.5l.9 2.4 2.1.8-2.1.8-.9 2.4-.9-2.4-2.1-.8 2.1-.8.9-2.4Z" /></>,
@@ -32,6 +32,8 @@ const PATHS: Record<IconName, JSX.Element> = {
   paint: <><path d="M3 21v-4.2L12.8 7a2.05 2.05 0 0 1 2.9 2.9L6 20.8H3Z" /><path d="M11.2 8.5l4.3 4.3" /></>,
   expand: <><path d="M4 4v3M4 7h3M20 4v3M20 7h-3M4 20v-3M4 17h3M20 20v-3M20 17h-3" /><rect x="8" y="8" width="8" height="8" rx="1" /></>,
   crop: <><path d="M7 2v20M17 2v20M2 7h20M2 17h20" /><rect x="7" y="7" width="10" height="10" /></>,
+  arrow: <><path d="M5 12h13M13 6l6 6-6 6" /></>,
+  type: <><path d="M5 6V4h14v2M12 4v16M9 20h6" /></>,
 }
 
 export function Icon({ name, size = 16, className }: { name: IconName; size?: number; className?: string }): JSX.Element {

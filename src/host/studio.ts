@@ -73,7 +73,7 @@ export interface StoryboardArgs {
 export interface CanvasArgs {
   /** What to draw in the redrawn region / the newly expanded area. */
   prompt: string
-  mode: 'inpaint' | 'outpaint'
+  mode: 'inpaint' | 'outpaint' | 'annotate'
   /** Original image (asset id, absolute path, or workspace path). */
   source?: string
   /** Browser-composited PNG data URL; skips server-side compositing when given. */
@@ -429,12 +429,32 @@ export class StudioService {
   async startCanvasEdit(args: CanvasArgs): Promise<JobRecord> {
     const prompt = args.prompt.trim()
     if (prompt === '') throw new Error('prompt 不能为空')
-    const mode = args.mode === 'outpaint' ? 'outpaint' : 'inpaint'
+    const mode = args.mode === 'outpaint' ? 'outpaint' : args.mode === 'annotate' ? 'annotate' : 'inpaint'
     const channel = this.requireChannel('image', args.channel)
     if (channel.kind === 'comfyui') throw new Error('ComfyUI 通道不支持画布编辑（请用 media_comfy_run 跑 inpaint 工作流）')
     const model = resolveModel(channel, 'image', args.model)
     const key = apiKeyOf(channel)
     if (key === '') throw new Error(`通道 ${channel.label} 缺少 API Key`)
+
+    // ── Annotation edit (Cowart-style): read arrows + labels baked into the
+    //    composite and produce a clean revised image — no mask, no region. ──
+    if (mode === 'annotate') {
+      if (args.composite === undefined || args.composite.trim() === '') throw new Error('标注改图需要 composite（带箭头/文字标注的截图 data URL）')
+      const annotated = this.importBase64(args.composite.trim(), 'canvas-annotate')
+      const dims = annotated.width === undefined || annotated.height === undefined ? undefined : { width: annotated.width, height: annotated.height }
+      const aspectRatio = args.aspectRatio !== undefined && args.aspectRatio !== ''
+        ? args.aspectRatio
+        : dims === undefined ? undefined : nearestAspect(dims.width, dims.height)
+      return this.startImage({
+        prompt: composeAnnotatePrompt(prompt),
+        refs: [annotated.id],
+        channel: args.channel,
+        model: args.model,
+        size: args.size,
+        aspectRatio,
+        n: args.n ?? 1,
+      })
+    }
 
     const instruction = composeCanvasPrompt(mode, prompt, args.region, args.expand)
 
@@ -1034,6 +1054,12 @@ function composeCanvasPrompt(mode: 'inpaint' | 'outpaint', userPrompt: string, r
   const direction = expand === undefined ? '指定' : DIRECTION_LABEL[expand.direction] ?? '指定'
   const howMuch = expand === undefined ? '' : `（约扩展 ${String(Math.round(expand.amount * 100))}%）`
   return `对原图做扩图。画面${direction}方向扩展${howMuch}。新增的白色空白区域内容：${userPrompt}。原图部分保持原样不变，新旧区域交界处自然衔接，透视、光影和整体风格与原图一致。`
+}
+
+/** Cowart-style annotation edit: read baked arrows + text, emit a clean image. */
+function composeAnnotatePrompt(userPrompt: string): string {
+  const note = userPrompt.trim() === '' ? '' : `\n补充要求：${userPrompt.trim()}`
+  return '请根据图中红色箭头和文字标注修改这张图片：把标注文字当作修改要求，箭头指向要修改的位置。生成一张干净的成品图；不要把箭头、文字标注、选框或任何标注痕迹带进最终图片。保留原图的主体、构图、比例和整体风格，除非标注另有要求。' + note
 }
 
 function classifyModels(models: string[], kind: 'image' | 'video'): string[] {

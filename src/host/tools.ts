@@ -214,7 +214,7 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
       required: ['prompt', 'mode'],
       properties: {
         prompt: { type: 'string', description: '重绘区/扩展区要画什么；例如“把猫换成一只戴围巾的狗”“一条向右延伸的柏油路与天空”' },
-        mode: { type: 'string', enum: ['inpaint', 'outpaint'], description: 'inpaint=局部重绘/改元素；outpaint=定向扩图' },
+        mode: { type: 'string', enum: ['inpaint', 'outpaint', 'annotate'], description: 'inpaint=局部重绘/改元素；outpaint=定向扩图；annotate=标注改图（读图上的箭头+文字标注，生成干净成品图，composite 传带标注的截图）' },
         source: { type: 'string', description: '原图：素材库 id、绝对路径或工作区相对路径（未传 composite 时必填）' },
         composite: { type: 'string', description: '浏览器画布合成好的 PNG data URL（已带白遮罩）；传了就不用 source' },
         image: { type: 'string', description: '原生 mask 的输入图 data URL（inpaint=原图，outpaint=已垫白边的图）；Ark 通道优先走原生 mask' },
@@ -247,7 +247,7 @@ export function buildTools(studio: StudioService, ctx: HostContext): ToolSpec[] 
     async execute(args) {
       const job = await studio.startCanvasEdit({
         prompt: asString(args.prompt),
-        mode: asString(args.mode, 'inpaint') === 'outpaint' ? 'outpaint' : 'inpaint',
+        mode: asString(args.mode, 'inpaint') === 'outpaint' ? 'outpaint' : asString(args.mode, 'inpaint') === 'annotate' ? 'annotate' : 'inpaint',
         source: asString(args.source) || undefined,
         composite: asString(args.composite) || undefined,
         image: asString(args.image) || undefined,

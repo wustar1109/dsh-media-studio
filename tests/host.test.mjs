@@ -238,6 +238,17 @@ studio.updateConfig({
   assert.equal(nativeSettled.state, 'succeeded', nativeSettled.error)
   assert.ok(nativeSettled.assets.length >= 1)
 
+  // Annotation edit (Cowart-style): composite screenshot + instruction prompt.
+  const annotate = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ mode: 'annotate', prompt: '整体保持写实', composite: PNG_DATA_URL }),
+  }).then(response => response.json())
+  assert.equal(annotate.ok, true, annotate.message)
+  const annotateSettled = await studio.jobs.wait(annotate.job.jobId, 10_000)
+  assert.equal(annotateSettled.state, 'succeeded', annotateSettled.error)
+  assert.match(String(annotateSettled.prompt), /箭头和文字标注/)
+
   // Composite path without a composite data URL but also without ffmpeg should
   // fail loudly rather than silently producing a broken reference.
   const noFfmpeg = await fetch(`${apiBase}/media-studio/api/canvas/edit`, {

@@ -323,3 +323,10 @@
 .ms-canvas-pick:hover{border-color:var(--ms-accent)}
 .ms-canvas-pick img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;background:var(--ms-bg)}
 .ms-canvas-pick span{font-size:.72em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ms-anno-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ms-anno-text{flex:1;min-width:160px}
+.ms-anno-list{display:flex;gap:6px;flex-wrap:wrap}
+.ms-anno-chip{display:inline-flex;align-items:center;gap:6px;background:var(--ms-surface);border:1px solid var(--ms-line);border-radius:999px;padding:3px 8px;font-size:.78em;max-width:100%}
+.ms-anno-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ms-anno-chip button{display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--ms-muted);cursor:pointer;padding:0;border-radius:50%;width:16px;height:16px}
+.ms-anno-chip button:hover{color:var(--ms-danger)}

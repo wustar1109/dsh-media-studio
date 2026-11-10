@@ -239,7 +239,7 @@ export function createRoutes(studio: StudioService, ctx: HostContext): { dispatc
           : undefined
         const job = await studio.startCanvasEdit({
           prompt: String(body.prompt ?? ''),
-          mode: body.mode === 'outpaint' ? 'outpaint' : 'inpaint',
+          mode: body.mode === 'outpaint' ? 'outpaint' : body.mode === 'annotate' ? 'annotate' : 'inpaint',
           source: optional(body.source),
           composite: optional(body.composite),
           image: optional(body.image),
